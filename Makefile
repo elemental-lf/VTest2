@@ -3,7 +3,9 @@
 PYTHON	?=	python3
 PYTHON	?=	python
 
-VARNISH_SRC ?= /home/phk/Varnish/trunk/varnish-cache
+# Path to a built varnish-cache source tree, only needed for the
+# varnishtest target. Must be set by the user.
+VARNISH_SRC ?=
 
 AWK	?=	awk
 
@@ -24,18 +26,15 @@ FLAGS=	-O2 -Wall -Werror
 CFLAGS=  ${FLAGS}
 LDFLAGS= ${FLAGS} -rdynamic
 DEFINES=
+VARNISH_INCS=
 
 INCS=	-I. \
 	-Isrc \
 	-Ilib \
 	-I/usr/local/include \
-	-I/opt/homebrew/Cellar/pcre2/10.47/include \
-	-I/opt/homebrew/Cellar/openssl@3/3.6.0/include \
 	-pthread
 
 LIBS=	-L/usr/local/lib \
-	-L/opt/homebrew/Cellar/pcre2/10.47/lib \
-	-L/opt/homebrew/Cellar/openssl@3/3.6.0/lib \
 	-lm \
 	-lpcre2-8 \
 	-lz \
@@ -66,11 +65,14 @@ test: vtest
 
 varnishtest:	${DEPS} ${SRCS}
 
+	@[ -n "${VARNISH_SRC}" ] || \
+		( echo "You must set VARNISH_SRC" 1>&2 ; exit 2)
 	@[ -d "${VARNISH_SRC}" ] || \
 		( echo "${VARNISH_SRC} directory missing" 1>&2 ; exit 2)
 
 	${MAKE} \
-		 DEFINES="-DVTEST_WITH_VTC_VARNISH -DVTEST_WITH_VTC_LOGEXPECT" \
+		 VARNISH_INCS="-I${VARNISH_SRC}/include" \
+		 DEFINES="-DVTEST_WITH_VTC_VARNISH -DVTEST_WITH_VTC_LOGEXPECT -DVTEST_WITH_VTC_VSM" \
 		 `for s in $(SRCS); do echo $${s%.c}.o;done`
 
 	${CC} \
@@ -119,7 +121,7 @@ install: vtest
 		${CFLAGS} \
 		${DEFINES} \
 		${INCS} \
-		-I${VARNISH_SRC}/include \
+		${VARNISH_INCS} \
 		-o $@ -c $<
 
 #######################################################################
