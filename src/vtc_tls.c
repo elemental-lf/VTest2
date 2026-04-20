@@ -1060,7 +1060,7 @@ get_subject_alt_names(struct tlsconn *c, X509 *x, struct vtclog *vl)
 
 			break;
 		case GEN_IPADD:
-			p = ASN1_STRING_get0_data(n->d.ip);
+			p = (unsigned char *)ASN1_STRING_get0_data(n->d.ip);
 			AN(p);
 
 			if (inet_ntop(ASN1_STRING_length(n->d.ip) == 16 ? AF_INET6 : AF_INET,
