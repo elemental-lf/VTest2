@@ -1225,6 +1225,7 @@ cmd_http_txreq(CMD_ARGS)
 	const char *up = NULL;
 	unsigned nohost;
 	unsigned nouseragent = 0;
+	unsigned tls_early_data = 0;
 
 	(void)vl;
 	CAST_OBJ_NOTNULL(hp, priv, HTTP_MAGIC);
@@ -1252,6 +1253,8 @@ cmd_http_txreq(CMD_ARGS)
 			av++;
 		} else if (!strcmp(*av, "-nouseragent")) {
 			nouseragent = 1;
+		} else if (!strcmp(*av, "-tls_early_data")) {
+			tls_early_data = 1;
 		} else
 			break;
 	}
@@ -1266,6 +1269,8 @@ cmd_http_txreq(CMD_ARGS)
 	av = http_tx_parse_args(av, vl, hp, NULL, nohost, 1, 1, nouseragent);
 	if (*av != NULL)
 		vtc_fatal(hp->vl, "Unknown http txreq spec: %s\n", *av);
+	if (tls_early_data)
+		tls_txreq_early_data(hp);
 	http_write(hp, 4, "txreq");
 
 	if (up) {

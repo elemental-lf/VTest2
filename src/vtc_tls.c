@@ -71,6 +71,7 @@ struct tlsconn {
 #define TLSCONN_MAGIC		0xcb266c5f
 	SSL			*ssl;
 	unsigned		failed;
+	unsigned		write_as_early_data;
 	struct vtclog		*vl;
 	char			*subject_name;
 	char			*issuer_name;
@@ -836,7 +837,17 @@ tlsconn_write(const struct http *hp, const void *buf, size_t len)
 	CAST_OBJ_NOTNULL(c, hp->tlsconn, TLSCONN_MAGIC);
 	AN(c->ssl);
 	assert(*hp->sess->fd == SSL_get_fd(c->ssl));
-	i = SSL_write(c->ssl, buf, len);
+	if (c->write_as_early_data) {
+		size_t written;
+
+		c->write_as_early_data = 0;
+		i = SSL_write_early_data(c->ssl, buf, len, &written);
+		if (i == 1) {
+			i = (ssize_t) written;
+		}
+	} else {
+		i = SSL_write(c->ssl, buf, len);
+	}
 	if (i <= 0) {
 		c->failed = 1;
 		vtc_tlserr(c->vl);
@@ -1331,6 +1342,7 @@ cert_var_alpn(struct tlsconn *c)
  * tls.cert*.subject
  * tls.cert*.issuer
  * tls.sess_reused
+ * tls.early_data_status
  */
 const char *
 vtc_tls_var_resolve(const struct http *hp, const char *spec)
@@ -1365,7 +1377,17 @@ vtc_tls_var_resolve(const struct http *hp, const char *spec)
 		r = cfg->alert;
 	else if (!strcmp(spec, "tls.sess_reused"))
 		r = (SSL_session_reused(c->ssl) ? "true" : "false");
-	else if (!strcmp(spec, "tls.staple_requested")) {
+	else if (!strcmp(spec, "tls.early_data_status")) {
+		int s = SSL_get_early_data_status(c->ssl);
+		if (s == SSL_EARLY_DATA_ACCEPTED)
+			r = "accepted";
+		else if (s == SSL_EARLY_DATA_REJECTED)
+			r = "rejected";
+		else if (s == SSL_EARLY_DATA_NOT_SENT)
+			r = "not-sent";
+		else
+			WRONG("Unknown return value from SSL_get_early_data_status");
+	} else if (!strcmp(spec, "tls.staple_requested")) {
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 		r = (SSL_get_tlsext_status_type(c->ssl) != -1
 		    ? "true" : "false");
@@ -1575,17 +1597,12 @@ tls_handshake(struct http *hp, struct tlsconn *conn)
 	WRONG("unreachable");
 }
 
-void
-cmd_http_tls_handshake(CMD_ARGS)
+static struct tlsconn *
+tls_conn_new(struct http *hp, struct vtclog *vl)
 {
-	struct http *hp;
 	struct tlsctx *cfg;
 	struct tlsconn *conn;
-	int i;
 
-	(void) av;
-
-	CAST_OBJ_NOTNULL(hp, priv, HTTP_MAGIC);
 	if (hp->tlsconf)
 		CAST_OBJ_NOTNULL(cfg, hp->tlsconf, TLSCTX_MAGIC);
 	else {
@@ -1594,7 +1611,6 @@ cmd_http_tls_handshake(CMD_ARGS)
 		else
 			cfg = tls_client_setup("", vl);
 		hp->tlsconf = cfg;
-		/* Restore http command list after TLS config parsing */
 		vtc_log_set_cmd(vl, http_cmds);
 	}
 
@@ -1623,6 +1639,28 @@ cmd_http_tls_handshake(CMD_ARGS)
 	if (cfg->type == TLS_CLIENT && cfg->c->sess_in)
 		vtc_sess_set(conn, cfg->c->sess_in);
 
+	AZ(hp->tlsconn);
+	hp->so = &tlsconn_so;
+	hp->tlsconn = conn;
+	return (conn);
+}
+
+void
+cmd_http_tls_handshake(CMD_ARGS)
+{
+	struct http *hp;
+	struct tlsconn *conn;
+	int i;
+
+	(void) av;
+
+	CAST_OBJ_NOTNULL(hp, priv, HTTP_MAGIC);
+
+	if (hp->tlsconn != NULL)
+		CAST_OBJ_NOTNULL(conn, hp->tlsconn, TLSCONN_MAGIC);
+	else
+		conn = tls_conn_new(hp, vl);
+
 	VTCP_nonblocking(*hp->sess->fd);
 	i = tls_handshake(hp, conn);
 	VTCP_blocking(*hp->sess->fd);
@@ -1634,10 +1672,21 @@ cmd_http_tls_handshake(CMD_ARGS)
 		vtc_log(vl, 3, "TLS handshake complete: %s %s",
 		    SSL_get_version(conn->ssl),
 		    SSL_get_cipher_name(conn->ssl));
+}
 
-	AZ(hp->tlsconn);
-	hp->so = &tlsconn_so;
-	hp->tlsconn = conn;
+void
+tls_txreq_early_data(struct http *hp)
+{
+	struct tlsconn *conn;
+
+	CHECK_OBJ_NOTNULL(hp, HTTP_MAGIC);
+	if (hp->tlsconn != NULL)
+		CAST_OBJ_NOTNULL(conn, hp->tlsconn, TLSCONN_MAGIC);
+	else {
+		conn = tls_conn_new(hp, hp->vl);
+	}
+
+	conn->write_as_early_data = 1;
 }
 
 void
