@@ -11,3 +11,5 @@ src/.deps/
 src/.dirstamp
 lib/.deps/
 lib/.dirstamp
+
+*~
