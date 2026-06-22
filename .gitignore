@@ -15,3 +15,4 @@ lib/.deps/
 lib/.dirstamp
 src/.libs/
 src/*.lo
+*~
