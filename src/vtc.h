@@ -109,6 +109,7 @@ void b64_settings(struct http *hp, const char *s);
 /* vtc_tls.c */
 void cmd_http_tls_config(CMD_ARGS);
 void cmd_http_tls_handshake(CMD_ARGS);
+void cmd_http_tls_shutdown(CMD_ARGS);
 void tls_txreq_early_data(struct http *hp);
 void vtc_tls_init(void);
 const char *vtc_tls_var_resolve(const struct http *hp, const char *spec);

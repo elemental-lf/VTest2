@@ -1,0 +1,60 @@
+varnishtest "Bidirectional TLS shutdown"
+
+feature tls
+
+server s1 -repeat 2 {
+	tls_handshake
+	rxreq
+	expect req.url == /first
+	txresp
+	rxreq
+	expect req.url == /second
+	txresp
+	tls_shutdown
+	expect tls.failed == false
+} -start
+
+server s2 -repeat 1 {
+	tls_handshake
+	rxreq
+	txresp
+	tls_shutdown -passive
+	expect tls.failed == false
+} -start
+
+client c1 -connect ${s1_sock} {
+	tls_handshake
+	txreq -url /first
+	rxresp
+	txreq -url /second
+	rxresp
+	tls_shutdown
+	expect tls.failed == false
+	expect_close
+	expect tls.failed == false
+} -run
+
+client c1 -connect ${s1_sock} {
+	tls_handshake
+	txreq -url /first
+	rxresp
+	txreq -url /second
+	rxresp
+	tls_shutdown -passive
+	expect tls.failed == false
+	expect_close
+	expect tls.failed == false
+} -run
+
+client c1 -connect ${s2_sock} {
+	tls_handshake
+	txreq
+	rxresp
+	tls_shutdown
+	expect tls.failed == false
+	expect_close
+	expect tls.failed == false
+} -run
+
+server s1 -wait
+server s2 -wait

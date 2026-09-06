@@ -813,6 +813,7 @@ static ssize_t
 tlsconn_read(const struct http *hp, void *buf, size_t len)
 {
 	struct tlsconn *c;
+	int err;
 	int i;
 
 	CHECK_OBJ_NOTNULL(hp, HTTP_MAGIC);
@@ -821,8 +822,12 @@ tlsconn_read(const struct http *hp, void *buf, size_t len)
 	assert(*hp->sess->fd == SSL_get_fd(c->ssl));
 	i = SSL_read(c->ssl, buf, len);
 	if (i <= 0) {
-		c->failed = 1;
-		vtc_tlserr(c->vl);
+		err = SSL_get_error(c->ssl, i);
+		/* A peer's close_notify is reported as a clean SSL read EOF. */
+		if (err != SSL_ERROR_ZERO_RETURN) {
+			c->failed = 1;
+			vtc_tlserr(c->vl);
+		}
 	}
 	return (i);
 }
@@ -1597,6 +1602,95 @@ tls_handshake(struct http *hp, struct tlsconn *conn)
 	WRONG("unreachable");
 }
 
+/* SECTION: client-server.spec.tls_shutdown
+ *
+ * tls_shutdown
+ *	Perform a bidirectional TLS shutdown. This sends a ``close_notify``
+ *	alert and waits for the peer's ``close_notify`` alert. The TCP
+ *	connection remains open for subsequent socket-level handling.
+ *
+ *	-passive
+ *		Wait for the peer to send its ``close_notify`` alert before
+ *		sending the local alert.
+ */
+static int
+tls_shutdown(struct http *hp, struct tlsconn *conn)
+{
+	vtim_real deadline;
+	short ev;
+	int i;
+
+	deadline = VTIM_real() + hp->timeout;
+
+	while (1) {
+		i = SSL_shutdown(conn->ssl);
+		if (i == 1)
+			return (1);
+		if (i == 0)
+			continue;
+
+		switch (SSL_get_error(conn->ssl, i)) {
+		case SSL_ERROR_WANT_READ:
+			ev = POLLIN;
+			break;
+		case SSL_ERROR_WANT_WRITE:
+			ev = POLLOUT;
+			break;
+		default:
+			vtc_tlserr(hp->vl);
+			return (-1);
+		}
+
+		i = hp->so->poll(hp, &ev, deadline);
+		assert(i >= 0);
+		if (i == 0)
+			vtc_fatal(hp->vl, "TLS shutdown timeout");
+	}
+
+	WRONG("unreachable");
+}
+
+static int
+tls_shutdown_passive(struct http *hp, struct tlsconn *conn)
+{
+	vtim_real deadline;
+	short ev;
+	char c;
+	int i;
+
+	deadline = VTIM_real() + hp->timeout;
+
+	while (1) {
+		i = SSL_read(conn->ssl, &c, 1);
+		if (i > 0) {
+			vtc_log(hp->vl, 3,
+			    "TLS shutdown received application data");
+			return (-1);
+		}
+
+		switch (SSL_get_error(conn->ssl, i)) {
+		case SSL_ERROR_ZERO_RETURN:
+			return (tls_shutdown(hp, conn));
+		case SSL_ERROR_WANT_READ:
+			ev = POLLIN;
+			break;
+		case SSL_ERROR_WANT_WRITE:
+			ev = POLLOUT;
+			break;
+		default:
+			vtc_tlserr(hp->vl);
+			return (-1);
+		}
+
+		i = hp->so->poll(hp, &ev, deadline);
+		assert(i >= 0);
+		if (i == 0)
+			vtc_fatal(hp->vl, "TLS passive shutdown timeout");
+	}
+
+	WRONG("unreachable");
+}
+
 static struct tlsconn *
 tls_conn_new(struct http *hp, struct vtclog *vl)
 {
@@ -1672,6 +1766,37 @@ cmd_http_tls_handshake(CMD_ARGS)
 		vtc_log(vl, 3, "TLS handshake complete: %s %s",
 		    SSL_get_version(conn->ssl),
 		    SSL_get_cipher_name(conn->ssl));
+}
+
+void
+cmd_http_tls_shutdown(CMD_ARGS)
+{
+	struct http *hp;
+	struct tlsconn *conn;
+	unsigned passive = 0;
+	int i;
+
+	CAST_OBJ_NOTNULL(hp, priv, HTTP_MAGIC);
+	CAST_OBJ_NOTNULL(conn, hp->tlsconn, TLSCONN_MAGIC);
+	AN(av[0]);
+	if (av[1] != NULL) {
+		if (strcmp(av[1], "-passive"))
+			vtc_fatal(vl, "Unknown tls_shutdown option: %s", av[1]);
+		AZ(av[2]);
+		passive = 1;
+	}
+
+	VTCP_nonblocking(*hp->sess->fd);
+	if (passive)
+		i = tls_shutdown_passive(hp, conn);
+	else
+		i = tls_shutdown(hp, conn);
+	VTCP_blocking(*hp->sess->fd);
+	if (i != 1) {
+		vtc_log(vl, 3, "TLS shutdown failed");
+		conn->failed = 1;
+	} else
+		vtc_log(vl, 3, "TLS shutdown complete");
 }
 
 void

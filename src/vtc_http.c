@@ -1872,6 +1872,7 @@ const struct cmds http_cmds[] = {
 	/* TLS */
 	CMD_HTTP(tls_config)
 	CMD_HTTP(tls_handshake)
+	CMD_HTTP(tls_shutdown)
 
 	/* client */
 	CMD_HTTP(rxresp)
