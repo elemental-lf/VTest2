@@ -2435,7 +2435,10 @@ cmd_rxwinup(CMD_ARGS)
 
 /* SECTION: stream.spec.settings_rxsettings rxsettings
  *
- * Receive a SETTINGS frame.
+ * Receive a SETTINGS frame. Connection-level WINDOW_UPDATE frames
+ * received before it are credited to the connection window and
+ * skipped: a peer may legally send them at any time, for example
+ * right after its own SETTINGS.
  */
 static void
 cmd_rxsettings(CMD_ARGS)
@@ -2447,8 +2450,14 @@ cmd_rxsettings(CMD_ARGS)
 
 	CAST_OBJ_NOTNULL(s, priv, STREAM_MAGIC);
 	CAST_OBJ_NOTNULL(hp, s->hp, HTTP_MAGIC);
-	s->frame = rxstuff(s);
-	CAST_OBJ_NOTNULL(f, s->frame, FRAME_MAGIC);
+	while (1) {
+		s->frame = rxstuff(s);
+		CAST_OBJ_NOTNULL(f, s->frame, FRAME_MAGIC);
+		if (s->id != 0 || f->type != TYPE_WINDOW_UPDATE)
+			break;
+		hp->h2_win_peer->size += f->md.winup_size;
+		s->win_peer += f->md.winup_size;
+	}
 	CHKFRAME(f->type, TYPE_SETTINGS, 0, *av);
 	if (! isnan(f->md.settings[SETTINGS_INITIAL_WINDOW_SIZE])) {
 		val = (uint32_t)f->md.settings[SETTINGS_INITIAL_WINDOW_SIZE];
