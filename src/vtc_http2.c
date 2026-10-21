@@ -1427,6 +1427,9 @@ cmd_tx11obj(CMD_ARGS)
 	int method_done = 1;
 	int path_done = 1;
 	int scheme_done = 1;
+	int authority_done = 1;
+	char * const *av2;
+	struct vsb *authority = NULL;
 	long bodylen = 0;
 	ssize_t len;
 	uint32_t stid = 0, pstid;
@@ -1453,6 +1456,7 @@ cmd_tx11obj(CMD_ARGS)
 		method_done = 0;
 		path_done = 0;
 		scheme_done = 0;
+		authority_done = 0;
 	} else if (!strcmp(cmd_str, "txresp")) {
 		ONLY_H2_SERVER(s->hp, av);
 		f.type = TYPE_HEADERS;
@@ -1474,6 +1478,54 @@ cmd_tx11obj(CMD_ARGS)
 
 #define AV_IS(str) !strcmp(*av, str)
 #define CMD_IS(str) !strcmp(cmd_str, str)
+	/*
+	 * Pseudo-header fields must precede all regular ones (RFC 9113 8.3),
+	 * so the defaults are encoded first. Look ahead for the pseudo-headers
+	 * the arguments provide themselves.
+	 */
+	for (av2 = av + 1; *av2 != NULL; av2++) {
+		if (!strcmp(*av2, "-noadd")) {
+			path_done = 1;
+			status_done = 1;
+			method_done = 1;
+			scheme_done = 1;
+			authority_done = 1;
+		} else if (!strcmp(*av2, "-status") && CMD_IS("txresp"))
+			status_done = 1;
+		else if (!strcmp(*av2, "-url"))
+			path_done = 1;
+		else if (!strcmp(*av2, "-method") || !strcmp(*av2, "-req"))
+			method_done = 1;
+		else if (!strcmp(*av2, "-scheme"))
+			scheme_done = 1;
+		else if (!strcmp(*av2, "-hdr") && av2[1] != NULL &&
+		    (!strcasecmp(av2[1], ":authority") ||
+		    !strcasecmp(av2[1], "host")))
+			authority_done = 1;
+	}
+
+	memset(&hdr, 0, sizeof(hdr));
+	hdr.t = hpk_not;
+
+	if (!status_done) { ENC(hdr, ":status", "200"); }
+	if (!path_done)   { ENC(hdr, ":path",	"/"); }
+	if (!method_done) { ENC(hdr, ":method", "GET"); }
+	if (!scheme_done) { ENC(hdr, ":scheme", "http"); }
+
+	/*
+	 * Off by default, as the request then grows a Host header. Servers
+	 * such as nghttp2 reject a request with neither :authority nor Host.
+	 * Only -hdr is looked at: an authority sent through -idxHdr, -litHdr
+	 * or -litIdxHdr, possibly by dynamic table index, still gets the
+	 * default added, so such a test needs -noadd or no macro.
+	 */
+	if (!authority_done && macro_isdef(NULL, "h2_default_authority")) {
+		authority = macro_expand(vl, "${h2_default_authority}");
+		AN(authority);
+		ENC(hdr, ":authority", VSB_data(authority));
+		VSB_destroy(&authority);
+	}
+
 	while (*++av) {
 		memset(&hdr, 0, sizeof(hdr));
 		hdr.t = hpk_not;
@@ -1623,14 +1675,6 @@ cmd_tx11obj(CMD_ARGS)
 #undef AV_IS
 	if (*av != NULL)
 		vtc_fatal(vl, "Unknown %s spec: %s\n", cmd_str, *av);
-
-	memset(&hdr, 0, sizeof(hdr));
-	hdr.t = hpk_not;
-
-	if (!status_done) { ENC(hdr, ":status", "200"); }
-	if (!path_done)   { ENC(hdr, ":path",	"/"); }
-	if (!method_done) { ENC(hdr, ":method", "GET"); }
-	if (!scheme_done) { ENC(hdr, ":scheme", "http"); }
 
 	f.size = gethpk_iterLen(iter);
 	if (f.flags & PRIORITY) {
