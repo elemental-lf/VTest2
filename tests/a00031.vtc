@@ -1,0 +1,17 @@
+vtest "Empty arguments on the client line are skipped"
+
+server s1 {
+	rxreq
+	txresp
+} -start
+
+# A suite can pass client options through a macro that is empty for some
+# transports, like ${h_client} for QUIC: an empty token is skipped, it does
+# not replace the specification.
+client c1 "" -connect ${s1_sock} {
+	txreq
+	rxresp
+	expect resp.status == 200
+} "" -run
+
+server s1 -wait
