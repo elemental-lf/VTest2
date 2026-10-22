@@ -12,6 +12,18 @@ make varnishtest VARNISH_SRC=/path      # Build with Varnish support
 make test                               # Build and run tests
 ```
 
+### HTTP/3 (QUIC) client
+
+`WITH_QUIC=1` adds an HTTP/3 client (`client cNAME -quic`, see `feature quic`), built on
+ngtcp2's OpenSSL backend and nghttp3:
+
+```bash
+make varnishtest WITH_QUIC=1 NGTCP2=/path/to/ngtcp2 NGHTTP3=/path/to/nghttp3
+```
+
+`NGTCP2` and `NGHTTP3` are install prefixes (with `include/` and `lib/`). It needs OpenSSL 3.5 or later.
+Object files are not rebuilt when this changes: run `make clean` first.
+
 ### Dependencies
 
 **Linux:** libpcre2-dev, zlib, libssl-dev
@@ -30,4 +42,5 @@ Test files start with `vtest` or `varnishtest` followed by a description. See `t
 
 For maintainers: `make update` syncs shared code from Varnish-Cache. Set `VARNISHSRC` to use a local repo instead of cloning.
 
-See `CLAUDE.md` for architecture details and `TLS-IMPL.md` for TLS support documentation.
+See `CLAUDE.md` for architecture details, `TLS-IMPL.md` for TLS support documentation and `QUIC-IMPL.md` for
+the QUIC and HTTP/3 client.

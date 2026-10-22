@@ -1519,8 +1519,8 @@ cmd_tx11obj(CMD_ARGS)
 	 * or -litIdxHdr, possibly by dynamic table index, still gets the
 	 * default added, so such a test needs -noadd or no macro.
 	 */
-	if (!authority_done && macro_isdef(NULL, "h2_default_authority")) {
-		authority = macro_expand(vl, "${h2_default_authority}");
+	if (!authority_done && macro_isdef(NULL, "http_default_authority")) {
+		authority = macro_expand(vl, "${http_default_authority}");
 		AN(authority);
 		ENC(hdr, ":authority", VSB_data(authority));
 		VSB_destroy(&authority);

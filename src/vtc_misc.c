@@ -514,6 +514,8 @@ abstract_uds_works(void)
  *        Varnish was built with TLSv1.3 support
  * tls
  *        Varnishtest was built with TLS support
+ * quic
+ *        Varnishtest was built with HTTP/3 (QUIC) client support
  * coverage
  *        Varnish was built with code coverage enabled.
  * asan
@@ -591,6 +593,12 @@ static const unsigned with_persistent_storage = 1;
 static const unsigned with_persistent_storage = 0;
 #endif
 
+#ifdef VTEST_WITH_QUIC
+static const unsigned with_quic = 1;
+#else
+static const unsigned with_quic = 0;
+#endif
+
 void v_matchproto_(cmd_f)
 cmd_feature(CMD_ARGS)
 {
@@ -649,6 +657,7 @@ cmd_feature(CMD_ARGS)
 		FEATURE("workspace_emulator", workspace_emulator);
 		FEATURE("abstract_uds", abstract_uds_works());
 		FEATURE("tls", 1);
+		FEATURE("quic", with_quic);
 #if defined(TLS1_3_VERSION) || OPENSSL_VERSION_NUMBER >= 0x10101000L
 		FEATURE("tls_1_3", 1);
 #else

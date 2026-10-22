@@ -47,9 +47,11 @@ struct sess_ops {
 
 sess_poll_f http_fd_poll;
 
-/* Forward declarations for TLS types */
+/* Forward declarations for TLS and QUIC types */
 struct tlsctx;
 struct tlsconn;
+struct quic_cfg;
+struct quic_conn;
 
 struct vtc_sess {
 	unsigned		magic;
@@ -61,6 +63,9 @@ struct vtc_sess {
 	int			*fd;
 
 	ssize_t			rcvbuf;
+
+	/* client -quic options, NULL for TCP */
+	const struct quic_cfg	*quic;
 };
 
 struct h2_window {
@@ -118,8 +123,40 @@ struct http {
 	struct hpk_ctx		*decctx;
 	struct h2_window	h2_win_self[1];
 	struct h2_window	h2_win_peer[1];
+
+	/* H/3, set for the whole session of a client -quic */
+	struct quic_conn	*quic;
 };
 
 void http_process(struct vtclog *vl, struct vtc_sess *vsp, const char *spec,
     int *sock, int *sfd, const char *addr, int rcvbuf);
+void http_set_cmds(const struct http *hp, struct vtclog *vl);
+
+#ifdef VTEST_WITH_QUIC
+/* vtc_quic.c */
+struct quic_cfg *quic_cfg_new(void);
+void quic_cfg_free(struct quic_cfg **);
+int quic_cfg_opt(struct quic_cfg *, char * const **avp, struct vtclog *);
+int quic_udp_connect(struct vtclog *, const char *addr, const char **errp);
+void quic_http_init(struct http *, const struct quic_cfg *);
+void quic_http_fini(struct http *);
+void quic_handshake(struct http *, struct vtclog *);
+void quic_expect_close(struct http *, struct vtclog *);
+const char *quic_var_resolve(struct http *, const char *spec, char *buf,
+    size_t len);
+void quic_conn_cmd(struct http *, char * const *av, struct vtclog *);
+void quic_not_available(const struct http *, char * const *av,
+    struct vtclog *);
+
+/* vtc_http3.c */
+void h3_cmd_stream(CMD_ARGS);
+
+/* vtc_tls.c */
+struct ssl_st *vtc_tls_quic_new(struct http *, struct vtclog *, int *early);
+void vtc_tls_quic_free(struct http *);
+void vtc_tls_quic_failed(const struct http *);
+const char *vtc_tls_quic_sess_in(const struct http *);
+void vtc_tls_quic_set_tp(const struct http *, const void *, size_t);
+int vtc_tls_quic_read_tp(const char *fn, unsigned char **tp, long *len);
+#endif
 

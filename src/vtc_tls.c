@@ -47,6 +47,7 @@ struct tls_client {
 	const char		*sess_out;
 	const char		*sess_in;
 	unsigned		cert_status;
+	unsigned		has_alpn;
 };
 
 static const char *TLS_CLIENT = "client";
@@ -70,6 +71,7 @@ struct tlsconn {
 	unsigned		magic;
 #define TLSCONN_MAGIC		0xcb266c5f
 	SSL			*ssl;
+	struct tlsctx		*cfg;
 	unsigned		failed;
 	unsigned		write_as_early_data;
 	struct vtclog		*vl;
@@ -77,10 +79,32 @@ struct tlsconn {
 	char			*issuer_name;
 	char			*alpn;
 	struct vsb		*subject_alt_names;
+	/* QUIC transport parameters stored beside the session (sess_out) */
+	unsigned char		*quic_tp;
+	size_t			quic_tp_len;
 };
+
+#define QUIC_TP_PEM_NAME	"QUIC TRANSPORT PARAMETERS"
+
+/*
+ * SSL ex_data index for the tlsconn. Index 0 (SSL_get_app_data()) belongs
+ * to ngtcp2's crypto backend on QUIC connections.
+ */
+static int tls_ex_conn = -1;
 
 /* Forward declarations */
 static void tls_ctx_free(struct tlsctx **);
+
+static struct tlsconn *
+tls_ssl_conn(const SSL *ssl)
+{
+	struct tlsconn *conn;
+
+	assert(tls_ex_conn >= 0);
+	CAST_OBJ_NOTNULL(conn, SSL_get_ex_data(ssl, tls_ex_conn),
+	    TLSCONN_MAGIC);
+	return (conn);
+}
 
 static void
 vtc_tlserr(struct vtclog *vl)
@@ -324,6 +348,7 @@ cmd_tls_cfg_alpn(CMD_ARGS)
 			vtc_tlserr(vl);
 			vtc_fatal(vl, "invalid 'alpn' specifier");
 		}
+		cfg->c->has_alpn = 1;
 		VSB_destroy(&vsb);
 	} else {
 		assert(cfg->type == TLS_SERVER);
@@ -472,15 +497,20 @@ cmd_tls_cfg_verify_peer(CMD_ARGS)
 static int
 sess_new_cb(SSL *ssl, SSL_SESSION *sess)
 {
+	struct tlsconn *conn;
 	struct tlsctx *cfg;
 	BIO *out;
 
-	CAST_OBJ_NOTNULL(cfg, SSL_get_ex_data(ssl, 0), TLSCTX_MAGIC);
+	conn = tls_ssl_conn(ssl);
+	CAST_OBJ_NOTNULL(cfg, conn->cfg, TLSCTX_MAGIC);
 
 	AN(cfg->c->sess_out);
 	out = BIO_new_file(cfg->c->sess_out, "w");
 	AN(out);
 	AN(PEM_write_bio_SSL_SESSION(out, sess));
+	if (conn->quic_tp != NULL)
+		AN(PEM_write_bio(out, QUIC_TP_PEM_NAME, "", conn->quic_tp,
+		    conn->quic_tp_len));
 	BIO_free(out);
 
 	return (0);
@@ -784,6 +814,24 @@ static const struct cmds tls_cfg_cmds_c[] = {
 	{ CMDS_MAGIC, NULL, NULL, CMDS_F_NONE }
 };
 
+static void
+tls_conn_free(struct tlsconn **cp)
+{
+	struct tlsconn *c;
+
+	TAKE_OBJ_NOTNULL(c, cp, TLSCONN_MAGIC);
+	SSL_free(c->ssl);
+	free(c->subject_name);
+	free(c->issuer_name);
+	free(c->alpn);
+	free(c->quic_tp);
+
+	if (c->subject_alt_names != NULL)
+		VSB_destroy(&c->subject_alt_names);
+
+	FREE_OBJ(c);
+}
+
 static int
 tlsconn_poll(const struct http *hp, short *events, vtim_real deadline)
 {
@@ -870,15 +918,7 @@ tlsconn_close(struct http *hp)
 	AN(c->ssl);
 	if (!c->failed)
 		(void)SSL_shutdown(c->ssl);
-	SSL_free(c->ssl);
-	free(c->subject_name);
-	free(c->issuer_name);
-	free(c->alpn);
-
-	if (c->subject_alt_names != NULL)
-		VSB_destroy(&c->subject_alt_names);
-
-	FREE_OBJ(c);
+	tls_conn_free(&c);
 	VTCP_close(hp->sess->fd);
 }
 
@@ -896,7 +936,7 @@ msg_cb(int write_p, int version, int content_type, const void *buf,
 	struct tlsctx *cfg;
 	const unsigned char *bp;
 
-	CAST_OBJ_NOTNULL(cfg, SSL_get_ex_data(ssl, 0), TLSCTX_MAGIC);
+	CAST_OBJ_NOTNULL(cfg, tls_ssl_conn(ssl)->cfg, TLSCTX_MAGIC);
 	bp = buf;
 
 	(void) write_p;
@@ -920,6 +960,37 @@ msg_cb(int write_p, int version, int content_type, const void *buf,
 	}
 }
 
+/* Append key material to $SSLKEYLOGFILE, for Wireshark */
+static void
+keylog_cb(const SSL *ssl, const char *line)
+{
+	static pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+	const char *fn;
+	FILE *f;
+
+	(void)ssl;
+	fn = getenv("SSLKEYLOGFILE");
+	if (fn == NULL || *fn == '\0')
+		return;
+	PTOK(pthread_mutex_lock(&mtx));
+	f = fopen(fn, "a");
+	if (f != NULL) {
+		(void)fprintf(f, "%s\n", line);
+		(void)fclose(f);
+	}
+	PTOK(pthread_mutex_unlock(&mtx));
+}
+
+static void
+tls_ctx_keylog(SSL_CTX *ctx)
+{
+	const char *fn;
+
+	fn = getenv("SSLKEYLOGFILE");
+	if (fn != NULL && *fn != '\0')
+		SSL_CTX_set_keylog_callback(ctx, keylog_cb);
+}
+
 static void *
 tls_server_setup(const char *spec, struct vtclog *vl)
 {
@@ -938,6 +1009,7 @@ tls_server_setup(const char *spec, struct vtclog *vl)
 
 	AN(SSL_CTX_set_session_id_context(cfg->ctx,
 		(const unsigned char *) "VTEST", strlen("VTEST")));
+	tls_ctx_keylog(cfg->ctx);
 
 	vtc_log_set_cmd(vl, tls_cfg_cmds_s);
 	parse_string(vl, cfg, spec);
@@ -966,6 +1038,7 @@ tls_client_setup(const char *spec, struct vtclog *vl)
 
 	SSL_CTX_set_verify(cfg->ctx, SSL_VERIFY_NONE, NULL);
 	SSL_CTX_set_default_verify_paths(cfg->ctx);
+	tls_ctx_keylog(cfg->ctx);
 
 	vtc_log_set_cmd(vl, tls_cfg_cmds_c);
 	parse_string(vl, cfg, spec);
@@ -1545,7 +1618,7 @@ cmd_http_tls_config(CMD_ARGS)
 		hp->tlsconf = tls_client_setup(av[1], vl);
 	AN(hp->tlsconf);
 	/* Restore http command list after TLS config parsing */
-	vtc_log_set_cmd(vl, http_cmds);
+	http_set_cmds(hp, vl);
 }
 
 /* SECTION: client-server.spec.tls_handshake
@@ -1692,7 +1765,7 @@ tls_shutdown_passive(struct http *hp, struct tlsconn *conn)
 }
 
 static struct tlsconn *
-tls_conn_new(struct http *hp, struct vtclog *vl)
+tls_conn_alloc(struct http *hp, struct vtclog *vl)
 {
 	struct tlsctx *cfg;
 	struct tlsconn *conn;
@@ -1705,15 +1778,15 @@ tls_conn_new(struct http *hp, struct vtclog *vl)
 		else
 			cfg = tls_client_setup("", vl);
 		hp->tlsconf = cfg;
-		vtc_log_set_cmd(vl, http_cmds);
+		http_set_cmds(hp, vl);
 	}
 
 	ALLOC_OBJ(conn, TLSCONN_MAGIC);
 	AN(conn);
 	conn->ssl = SSL_new(cfg->ctx);
 	AN(conn->ssl);
+	conn->cfg = cfg;
 	conn->vl = vl;
-	AN(SSL_set_fd(conn->ssl, *hp->sess->fd));
 	if (cfg->type == TLS_CLIENT) {
 		SSL_set_connect_state(conn->ssl);
 		if (cfg->c->servername)
@@ -1727,11 +1800,22 @@ tls_conn_new(struct http *hp, struct vtclog *vl)
 		SSL_set_accept_state(conn->ssl);
 	}
 
-	AN(SSL_set_ex_data(conn->ssl, 0, cfg));
+	AN(SSL_set_ex_data(conn->ssl, tls_ex_conn, conn));
 	SSL_set_msg_callback(conn->ssl, msg_cb);
 
 	if (cfg->type == TLS_CLIENT && cfg->c->sess_in)
 		vtc_sess_set(conn, cfg->c->sess_in);
+
+	return (conn);
+}
+
+static struct tlsconn *
+tls_conn_new(struct http *hp, struct vtclog *vl)
+{
+	struct tlsconn *conn;
+
+	conn = tls_conn_alloc(hp, vl);
+	AN(SSL_set_fd(conn->ssl, *hp->sess->fd));
 
 	AZ(hp->tlsconn);
 	hp->so = &tlsconn_so;
@@ -1750,6 +1834,13 @@ cmd_http_tls_handshake(CMD_ARGS)
 
 	CAST_OBJ_NOTNULL(hp, priv, HTTP_MAGIC);
 
+#ifdef VTEST_WITH_QUIC
+	if (hp->quic != NULL) {
+		AZ(av[1]);
+		quic_handshake(hp, vl);
+		return;
+	}
+#endif
 	if (hp->tlsconn != NULL)
 		CAST_OBJ_NOTNULL(conn, hp->tlsconn, TLSCONN_MAGIC);
 	else
@@ -1842,4 +1933,112 @@ vtc_tls_init(void)
 	/* OpenSSL >= 1.1.0 initializes automatically */
 	OPENSSL_init_ssl(0, NULL);
 #endif
+	tls_ex_conn = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+	assert(tls_ex_conn > 0);
 }
+
+#ifdef VTEST_WITH_QUIC
+/*
+ * QUIC uses the TLS configuration and the tls.* variables, but the TLS
+ * records travel in CRYPTO frames: the SSL is not bound to the socket
+ * and hp->so stays the plain one.
+ */
+SSL *
+vtc_tls_quic_new(struct http *hp, struct vtclog *vl, int *early)
+{
+	struct tlsconn *conn;
+	SSL_SESSION *sess;
+
+	CHECK_OBJ_NOTNULL(hp, HTTP_MAGIC);
+	AN(early);
+	AZ(hp->sfd);
+	AZ(hp->tlsconn);
+	conn = tls_conn_alloc(hp, vl);
+	assert(conn->cfg->type == TLS_CLIENT);
+	if (!conn->cfg->c->has_alpn)
+		AZ(SSL_set_alpn_protos(conn->ssl,
+		    (const unsigned char *)"\x02h3", 3));
+	sess = SSL_get_session(conn->ssl);
+	*early = sess != NULL && SSL_SESSION_get_max_early_data(sess) > 0;
+	hp->tlsconn = conn;
+	return (conn->ssl);
+}
+
+void
+vtc_tls_quic_free(struct http *hp)
+{
+	struct tlsconn *c;
+
+	CHECK_OBJ_NOTNULL(hp, HTTP_MAGIC);
+	TAKE_OBJ_NOTNULL(c, &hp->tlsconn, TLSCONN_MAGIC);
+	tls_conn_free(&c);
+}
+
+const char *
+vtc_tls_quic_sess_in(const struct http *hp)
+{
+	struct tlsctx *cfg;
+
+	CHECK_OBJ_NOTNULL(hp, HTTP_MAGIC);
+	CAST_OBJ_NOTNULL(cfg, hp->tlsconf, TLSCTX_MAGIC);
+	assert(cfg->type == TLS_CLIENT);
+	return (cfg->c->sess_in);
+}
+
+void
+vtc_tls_quic_failed(const struct http *hp)
+{
+	struct tlsconn *c;
+
+	CHECK_OBJ_NOTNULL(hp, HTTP_MAGIC);
+	CAST_OBJ_NOTNULL(c, hp->tlsconn, TLSCONN_MAGIC);
+	c->failed = 1;
+	vtc_tlserr(c->vl);
+}
+
+/* Remember the 0-RTT transport parameters for the next sess_out write */
+void
+vtc_tls_quic_set_tp(const struct http *hp, const void *tp, size_t len)
+{
+	struct tlsconn *c;
+
+	CHECK_OBJ_NOTNULL(hp, HTTP_MAGIC);
+	CAST_OBJ_NOTNULL(c, hp->tlsconn, TLSCONN_MAGIC);
+	AN(tp);
+	free(c->quic_tp);
+	c->quic_tp = malloc(len);
+	AN(c->quic_tp);
+	memcpy(c->quic_tp, tp, len);
+	c->quic_tp_len = len;
+}
+
+/* Read the 0-RTT transport parameters stored beside a session */
+int
+vtc_tls_quic_read_tp(const char *fn, unsigned char **tp, long *len)
+{
+	char *name, *header;
+	BIO *in;
+	int r = -1;
+
+	AN(fn);
+	AN(tp);
+	AN(len);
+	in = BIO_new_file(fn, "r");
+	if (in == NULL)
+		return (-1);
+	while (PEM_read_bio(in, &name, &header, tp, len) == 1) {
+		OPENSSL_free(header);
+		if (!strcmp(name, QUIC_TP_PEM_NAME)) {
+			OPENSSL_free(name);
+			r = 0;
+			break;
+		}
+		OPENSSL_free(name);
+		OPENSSL_free(*tp);
+		*tp = NULL;
+	}
+	ERR_clear_error();
+	BIO_free(in);
+	return (r);
+}
+#endif

@@ -43,6 +43,27 @@ LIBS=	-L/usr/local/lib \
 	-lcrypto
 
 #######################################################################
+# HTTP/3 (QUIC) client support, enabled with WITH_QUIC=1
+
+WITH_QUIC ?= 0
+NGTCP2	?= /home/lf/src/stf/tlsentinel/cmake-build-debug/ngtcp2
+NGHTTP3	?= /home/lf/src/stf/tlsentinel/cmake-build-debug/nghttp3
+
+QUIC_DEFINES_1 = -DVTEST_WITH_QUIC \
+	-I${NGTCP2}/include \
+	-I${NGHTTP3}/include
+QUIC_LIBS_1 = -L${NGTCP2}/lib \
+	-L${NGHTTP3}/lib \
+	-Wl,--rpath,${NGTCP2}/lib \
+	-Wl,--rpath,${NGHTTP3}/lib \
+	-lngtcp2_crypto_ossl \
+	-lngtcp2 \
+	-lnghttp3
+
+QUIC_DEFINES = ${QUIC_DEFINES_${WITH_QUIC}}
+QUIC_LIBS = ${QUIC_LIBS_${WITH_QUIC}}
+
+#######################################################################
 # target for vtest without builtin varnish support
 
 vtest: ${DEPS} ${SRCS}
@@ -55,10 +76,11 @@ vtest: ${DEPS} ${SRCS}
 		-o vtest \
 		${INCS} \
 		${OBJS} \
+		${QUIC_LIBS} \
 		${LIBS}
 
-test: vtest
-	env PATH=`pwd`:${PATH} vtest tests/*.vtc tests/tls/*.vtc
+test-vtest: vtest
+	env PATH=`pwd`:${PATH} vtest tests/*.vtc tests/tls/*.vtc tests/quic/*.vtc
 
 #######################################################################
 # target for vtest with builtin varnish support (needs varnish source tree)
@@ -79,6 +101,7 @@ varnishtest:	${DEPS} ${SRCS}
 		${LDFLAGS} \
 		-o varnishtest \
 		${OBJS} \
+		${QUIC_LIBS} \
 		${LIBS} \
 		-L${VARNISH_SRC}/lib/libvarnishapi/.libs \
 		-Wl,--rpath,${VARNISH_SRC}/lib/libvarnishapi/.libs \
@@ -87,8 +110,8 @@ varnishtest:	${DEPS} ${SRCS}
 #######################################################################
 # Test target
 
-test: vtest
-	env PATH=`pwd`:${PATH} vtest tests/*.vtc
+test-varnishtest: varnishtest
+	env PATH=`pwd`:${PATH} varnishtest tests/*.vtc tests/tls/*.vtc tests/quic/*.vtc
 
 #######################################################################
 # Install target.
@@ -120,6 +143,7 @@ install: vtest
 	${CC} \
 		${CFLAGS} \
 		${DEFINES} \
+		${QUIC_DEFINES} \
 		${INCS} \
 		${VARNISH_INCS} \
 		-o $@ -c $<

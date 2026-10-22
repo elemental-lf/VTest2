@@ -116,6 +116,7 @@ const char *vtc_tls_var_resolve(const struct http *hp, const char *spec);
 
 /* vtc_gzip.c */
 void vtc_gunzip(struct http *, char *, long *);
+struct vsb *vtc_gunzip_vsb(struct vtclog *, int fatal, const struct vsb *);
 int vtc_gzip_cmd(struct http *hp, char * const *argv, char **body, long *bodylen);
 
 /* vtc_subr.c */

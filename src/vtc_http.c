@@ -311,9 +311,19 @@ http_count_header(char * const *hh, const char *hdr)
  */
 
 static const char *
-cmd_var_resolve(struct http *hp, char *spec)
+cmd_var_resolve(struct http *hp, char *spec, char *buf, size_t buflen)
 {
 	char **hh, *hdr;
+
+#ifdef VTEST_WITH_QUIC
+	if (hp->quic != NULL && (!strncmp(spec, "quic.", 5) ||
+	    !strncmp(spec, "tls.", 4) || !strncmp(spec, "goaway.", 7) ||
+	    !strncmp(spec, "H3_", 3) || !strncmp(spec, "QPACK_", 6)))
+		return (quic_var_resolve(hp, spec, buf, buflen));
+#else
+	(void)buf;
+	(void)buflen;
+#endif
 	if (!strcmp(spec, "remote.ip"))
 		return (hp->rem_ip);
 	if (!strcmp(spec, "remote.port"))
@@ -371,6 +381,7 @@ cmd_http_expect(CMD_ARGS)
 	const char *lhs;
 	char *cmp;
 	const char *rhs;
+	char lbuf[256], rbuf[256];
 
 	(void)vl;
 	CAST_OBJ_NOTNULL(hp, priv, HTTP_MAGIC);
@@ -381,9 +392,9 @@ cmd_http_expect(CMD_ARGS)
 	AN(av[1]);
 	AN(av[2]);
 	AZ(av[3]);
-	lhs = cmd_var_resolve(hp, av[0]);
+	lhs = cmd_var_resolve(hp, av[0], lbuf, sizeof lbuf);
 	cmp = av[1];
-	rhs = cmd_var_resolve(hp, av[2]);
+	rhs = cmd_var_resolve(hp, av[2], rbuf, sizeof rbuf);
 
 	vtc_expect(vl, av[0], lhs, cmp, av[2], rhs);
 }
@@ -1525,6 +1536,12 @@ cmd_http_expect_close(CMD_ARGS)
 	CAST_OBJ_NOTNULL(hp, priv, HTTP_MAGIC);
 	AZ(av[1]);
 
+#ifdef VTEST_WITH_QUIC
+	if (hp->quic != NULL) {
+		quic_expect_close(hp, vl);
+		return;
+	}
+#endif
 	vtc_log(vl, 4, "Expecting close (fd = %d)", *hp->sess->fd);
 	if (hp->h2)
 		stop_h2(hp);
@@ -1792,6 +1809,12 @@ cmd_http_stream(CMD_ARGS)
 {
 	struct http *hp;
 	CAST_OBJ_NOTNULL(hp, priv, HTTP_MAGIC);
+#ifdef VTEST_WITH_QUIC
+	if (hp->quic != NULL) {
+		h3_cmd_stream(av, hp, vl);
+		return;
+	}
+#endif
 	if (!hp->h2) {
 		vtc_log(hp->vl, 4, "Not in H/2 mode, do what's needed");
 		if (hp->sfd)
@@ -1897,6 +1920,104 @@ const struct cmds http_cmds[] = {
 	{ CMDS_MAGIC, NULL, NULL }
 };
 
+#ifdef VTEST_WITH_QUIC
+/* SECTION: client-server.spec.quic HTTP/3 client commands
+ *
+ * A client started with ``-quic`` accepts only these commands at the top
+ * level of its specification: ``tls_config``, ``tls_handshake``,
+ * ``stream``, ``expect``, ``expect_close``, ``timeout``, ``fatal``,
+ * ``non_fatal``, and the connection level commands of the ``stream 0``
+ * specification (``quic_close``, ``quic_rebind``, ``rxgoaway``,
+ * ``txgoaway``, ``quic_wait_handshake_confirmed``). Requests are sent in
+ * ``stream`` specifications.
+ */
+static void
+cmd_http_quic(CMD_ARGS)
+{
+	struct http *hp;
+
+	CAST_OBJ_NOTNULL(hp, priv, HTTP_MAGIC);
+	AN(hp->quic);
+	quic_conn_cmd(hp, av, vl);
+}
+
+static void
+cmd_http_quic_na(CMD_ARGS)
+{
+	struct http *hp;
+
+	CAST_OBJ_NOTNULL(hp, priv, HTTP_MAGIC);
+	quic_not_available(hp, av, vl);
+}
+
+static const struct cmds http_quic_cmds[] = {
+#define CMD_HTTP(n) { CMDS_MAGIC, #n, cmd_http_##n },
+#define CMD_QUIC(n) { CMDS_MAGIC, #n, cmd_http_quic },
+#define CMD_NA(n) { CMDS_MAGIC, #n, cmd_http_quic_na },
+	CMD_HTTP(timeout)
+	CMD_HTTP(fatal)
+	CMD_HTTP(non_fatal)
+	CMD_HTTP(stream)
+	CMD_HTTP(tls_config)
+	CMD_HTTP(tls_handshake)
+	CMD_HTTP(expect)
+	CMD_HTTP(expect_close)
+
+	CMD_QUIC(quic_close)
+	CMD_QUIC(quic_rebind)
+	CMD_QUIC(quic_wait_handshake_confirmed)
+	CMD_QUIC(rxgoaway)
+	CMD_QUIC(txgoaway)
+
+	CMD_NA(accept)
+	CMD_NA(close)
+	CMD_NA(recv)
+	CMD_NA(send)
+	CMD_NA(send_n)
+	CMD_NA(send_urgent)
+	CMD_NA(sendhex)
+	CMD_NA(shutdown)
+	CMD_NA(gunzip)
+	CMD_NA(write_body)
+	CMD_NA(chunked)
+	CMD_NA(chunkedlen)
+	CMD_NA(rxchunk)
+	CMD_NA(settings)
+	CMD_NA(tls_shutdown)
+	CMD_NA(rxresp)
+	CMD_NA(rxrespbody)
+	CMD_NA(rxresphdrs)
+	CMD_NA(txpri)
+	CMD_NA(txreq)
+	CMD_NA(rxpri)
+	CMD_NA(rxreq)
+	CMD_NA(rxreqbody)
+	CMD_NA(rxreqhdrs)
+	CMD_NA(txresp)
+	CMD_NA(upgrade)
+	CMD_NA(expect_pattern)
+#undef CMD_NA
+#undef CMD_QUIC
+#undef CMD_HTTP
+	{ CMDS_MAGIC, NULL, NULL }
+};
+#endif
+
+/* Restore the command list of a session, e.g. after tls_config parsing */
+void
+http_set_cmds(const struct http *hp, struct vtclog *vl)
+{
+
+	CHECK_OBJ_NOTNULL(hp, HTTP_MAGIC);
+#ifdef VTEST_WITH_QUIC
+	if (hp->quic != NULL) {
+		vtc_log_set_cmd(vl, http_quic_cmds);
+		return;
+	}
+#endif
+	vtc_log_set_cmd(vl, http_cmds);
+}
+
 static void
 http_process_cleanup(void *arg)
 {
@@ -1904,6 +2025,10 @@ http_process_cleanup(void *arg)
 
 	CAST_OBJ_NOTNULL(hp, arg, HTTP_MAGIC);
 
+#ifdef VTEST_WITH_QUIC
+	if (hp->quic != NULL)
+		quic_http_fini(hp);
+#endif
 	if (vtc_error && *hp->sess->fd >= 0)
 		VTCP_close(hp->sess->fd);
 	if (hp->h2)
@@ -2045,6 +2170,12 @@ http_process(struct vtclog *vl, struct vtc_sess *vsp, const char *spec,
 		strcpy(hp->rem_port, "0");
 		hp->rem_path = strdup(addr);
 	}
+#ifdef VTEST_WITH_QUIC
+	if (vsp->quic != NULL) {
+		quic_http_init(hp, vsp->quic);
+		http_set_cmds(hp, hp->vl);
+	}
+#endif
 	/* XXX: After an upgrade to HTTP/2 the cleanup of a server that is
 	 * not -wait'ed before the test resets is subject to a race where the
 	 * cleanup does not happen, so ASAN reports leaks despite the push

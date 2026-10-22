@@ -41,6 +41,7 @@
 #include <unistd.h>
 
 #include "vtc.h"
+#include "vtc_http.h"
 
 #include "vsa.h"
 #include "vss.h"
@@ -62,6 +63,8 @@ struct client {
 
 	char			*proxy_spec;
 	int			proxy_version;
+
+	struct quic_cfg		*quic;
 
 	unsigned		running;
 	pthread_t		tp;
@@ -200,6 +203,18 @@ client_connect(struct vtclog *vl, struct client *c)
 	int fd;
 
 	vtc_log(vl, 3, "Connect to %s", c->addr);
+#ifdef VTEST_WITH_QUIC
+	if (c->quic != NULL) {
+		if (VUS_is(c->addr))
+			vtc_fatal(c->vl, "-quic needs an IP address: %s",
+			    c->addr);
+		fd = quic_udp_connect(vl, c->addr, &err);
+		if (fd < 0)
+			vtc_fatal(c->vl, "Failed to open %s: %s",
+			    c->addr, err);
+		return (fd);
+	}
+#endif
 	if (VUS_is(c->addr))
 		fd = client_uds_connect(vl, c->addr, 10., &err);
 	else
@@ -272,6 +287,10 @@ client_delete(struct client *c)
 	free(c->name);
 	free(c->addr);
 	free(c->proxy_spec);
+#ifdef VTEST_WITH_QUIC
+	if (c->quic != NULL)
+		quic_cfg_free(&c->quic);
+#endif
 	/* XXX: MEMLEAK (?)*/
 	FREE_OBJ(c);
 }
@@ -287,6 +306,12 @@ client_start(struct client *c)
 
 	CHECK_OBJ_NOTNULL(c, CLIENT_MAGIC);
 	vtc_log(c->vl, 2, "Starting client");
+	if (c->quic != NULL && c->vsp->keepalive)
+		vtc_fatal(c->vl, "-keepalive is not available with -quic");
+	if (c->quic != NULL && c->proxy_spec != NULL)
+		vtc_fatal(c->vl,
+		    "-proxy1/-proxy2 are not available with -quic");
+	c->vsp->quic = c->quic;
 	c->running = 1;
 	vsb = macro_expand(c->vl, c->connect);
 	AN(vsb);
@@ -387,6 +412,21 @@ cmd_client(CMD_ARGS)
 		AZ(c->running);
 		if (Sess_GetOpt(c->vsp, &av))
 			continue;
+
+		if (!strcmp(*av, "-quic")) {
+#ifdef VTEST_WITH_QUIC
+			if (c->quic == NULL)
+				c->quic = quic_cfg_new();
+			continue;
+#else
+			vtc_fatal(c->vl,
+			    "-quic: HTTP/3 (QUIC) support is not compiled in");
+#endif
+		}
+#ifdef VTEST_WITH_QUIC
+		if (c->quic != NULL && quic_cfg_opt(c->quic, &av, c->vl))
+			continue;
+#endif
 
 		if (!strcmp(*av, "-connect")) {
 			bprintf(c->connect, "%s", av[1]);

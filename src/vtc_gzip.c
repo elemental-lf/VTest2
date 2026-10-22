@@ -69,7 +69,7 @@ APOS(ssize_t sz)
  * GUNZIPery
  */
 
-static struct vsb *
+struct vsb *
 vtc_gunzip_vsb(struct vtclog *vl, int fatal, const struct vsb *vin)
 {
 	z_stream vz;
