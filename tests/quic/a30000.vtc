@@ -1,0 +1,32 @@
+vtest "QUIC client without a server"
+
+feature quic
+
+# Nothing listens on this UDP port: the handshake times out.
+client c1 -quic -connect ${bad_backend} -quic_param handshake_timeout=0.5 {
+	tls_handshake
+	expect quic.handshake_done == false
+	expect quic.close.type == handshake_timeout
+	expect quic.early_data == not_sent
+	expect quic.pkts_out > 1
+	expect tls.failed == true
+	expect_close
+} -run
+
+# The first stream starts the connection without tls_handshake.
+client c2 -quic -connect ${bad_backend} -quic_param handshake_timeout=0.5 {
+	stream 1 {
+		expect stream.id == <undef>
+	} -run
+	stream 0 {
+		expect_close
+		expect quic.close.type == handshake_timeout
+	} -run
+} -run
+
+# Dropping every datagram we send.
+client c3 -quic -connect ${bad_backend} -quic_drop out:every:1 \
+    -quic_param handshake_timeout=0.5 {
+	tls_handshake
+	expect quic.pkts_out == quic.drops_out
+} -run

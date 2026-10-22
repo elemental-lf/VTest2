@@ -47,6 +47,27 @@ LIBS=	-L/usr/local/lib \
 	-lcrypto
 
 #######################################################################
+# HTTP/3 (QUIC) client support, enabled with WITH_QUIC=1
+
+WITH_QUIC ?= 0
+NGTCP2	?= /home/lf/src/stf/tlsentinel/cmake-build-debug/ngtcp2
+NGHTTP3	?= /home/lf/src/stf/tlsentinel/cmake-build-debug/nghttp3
+
+QUIC_DEFINES_1 = -DVTEST_WITH_QUIC \
+	-I${NGTCP2}/include \
+	-I${NGHTTP3}/include
+QUIC_LIBS_1 = -L${NGTCP2}/lib \
+	-L${NGHTTP3}/lib \
+	-Wl,--rpath,${NGTCP2}/lib \
+	-Wl,--rpath,${NGHTTP3}/lib \
+	-lngtcp2_crypto_ossl \
+	-lngtcp2 \
+	-lnghttp3
+
+QUIC_DEFINES = ${QUIC_DEFINES_${WITH_QUIC}}
+QUIC_LIBS = ${QUIC_LIBS_${WITH_QUIC}}
+
+#######################################################################
 # target for vtest without builtin varnish support
 
 vtest: ${DEPS} ${SRCS}
@@ -59,6 +80,7 @@ vtest: ${DEPS} ${SRCS}
 		-o vtest \
 		${INCS} \
 		${OBJS} \
+		${QUIC_LIBS} \
 		${LIBS}
 
 .PHONY: version.h
@@ -79,7 +101,7 @@ src/vtc_main.o: version.h
 # Test target
 
 test: vtest
-	env PATH=`pwd`:${PATH} vtest tests/*.vtc
+	env PATH=`pwd`:${PATH} vtest tests/*.vtc tests/tls/*.vtc tests/quic/*.vtc
 
 #######################################################################
 # pkg-config
@@ -122,6 +144,7 @@ install: vtest vtest.pc
 	${CC} \
 		${CFLAGS} \
 		${DEFINES} \
+		${QUIC_DEFINES} \
 		${INCS} \
 		-I${VARNISH_SRC}/include \
 		-o $@ -c $<

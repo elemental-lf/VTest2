@@ -516,6 +516,8 @@ abstract_uds_works(void)
  * tls_raw_staple
  *        The TLS library staples OCSP responses verbatim, allowing
  *        tests to staple arbitrary data (OpenSSL < 3.6)
+ * quic
+ *        Varnishtest was built with HTTP/3 (QUIC) client support
  * abstract_uds
  *        Creation of an abstract unix domain socket succeeded.
  * disable_aslr
@@ -530,6 +532,12 @@ abstract_uds_works(void)
  * misspelled macro to fail silently. You should only need it if you must
  * run a test with strings of the form "${...}".
  */
+
+#ifdef VTEST_WITH_QUIC
+static const unsigned with_quic = 1;
+#else
+static const unsigned with_quic = 0;
+#endif
 
 void v_matchproto_(cmd_f)
 cmd_feature(CMD_ARGS)
@@ -583,6 +591,7 @@ cmd_feature(CMD_ARGS)
 		FEATURE("tls", 1);
 		FEATURE("abstract_uds", abstract_uds_works());
 		FEATURE("tls", 1);
+		FEATURE("quic", with_quic);
 #if defined(TLS1_3_VERSION) || OPENSSL_VERSION_NUMBER >= 0x10101000L
 		FEATURE("tls_1_3", 1);
 #else
