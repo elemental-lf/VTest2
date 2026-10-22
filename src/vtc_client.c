@@ -375,6 +375,10 @@ cmd_client(CMD_ARGS)
 		if (vtc_error)
 			break;
 
+		/* An empty macro, such as a suite's transport option */
+		if (**av == '\0')
+			continue;
+
 		if (!vstrcmp(*av, "-wait")) {
 			client_wait(c);
 			continue;
