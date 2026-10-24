@@ -1927,9 +1927,9 @@ const struct cmds http_cmds[] = {
  * level of its specification: ``tls_config``, ``tls_handshake``,
  * ``stream``, ``expect``, ``expect_close``, ``timeout``, ``fatal``,
  * ``non_fatal``, and the connection level commands of the ``stream 0``
- * specification (``quic_close``, ``quic_rebind``, ``rxgoaway``,
- * ``txgoaway``, ``quic_wait_handshake_confirmed``). Requests are sent in
- * ``stream`` specifications.
+ * specification (``quic_close``, ``quic_rebind``, ``quic_drop``,
+ * ``rxgoaway``, ``txgoaway``, ``quic_wait_handshake_confirmed``).
+ * Requests are sent in ``stream`` specifications.
  */
 static void
 cmd_http_quic(CMD_ARGS)
@@ -1965,6 +1965,7 @@ static const struct cmds http_quic_cmds[] = {
 
 	CMD_QUIC(quic_close)
 	CMD_QUIC(quic_rebind)
+	CMD_QUIC(quic_drop)
 	CMD_QUIC(quic_wait_handshake_confirmed)
 	CMD_QUIC(rxgoaway)
 	CMD_QUIC(txgoaway)

@@ -908,8 +908,9 @@ h3_chunk_add(struct h3_stream *s, char *data, size_t len)
  * stream id (0, 4, 8, ...) is allocated by the first ``txreq`` and is
  * available as ``stream.id``. ``stream 0`` is the connection: it takes the
  * connection level commands (``quic_close``, ``quic_rebind``,
- * ``rxgoaway``, ``txgoaway``, ``quic_wait_handshake_confirmed``,
- * ``expect_close``) and ``expect``. ``next`` as NAME picks a new label.
+ * ``quic_drop``, ``rxgoaway``, ``txgoaway``,
+ * ``quic_wait_handshake_confirmed``, ``expect_close``) and ``expect``.
+ * ``next`` as NAME picks a new label.
  *
  * These commands are available in HTTP/3 streams:
  *
@@ -1574,6 +1575,7 @@ static const struct cmds h3_stream_cmds[] = {
 	CMD_CONN(expect_close)
 	CMD_CONN(quic_close)
 	CMD_CONN(quic_rebind)
+	CMD_CONN(quic_drop)
 	CMD_CONN(quic_wait_handshake_confirmed)
 	CMD_CONN(rxgoaway)
 	CMD_CONN(txgoaway)

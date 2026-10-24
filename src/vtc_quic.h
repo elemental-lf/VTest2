@@ -44,6 +44,13 @@ struct quic_cfg {
 	VTAILQ_HEAD(, quic_drop) drops;
 };
 
+/* Runtime packet filter of one direction, set by the quic_drop command */
+struct quic_pkt_filter {
+	unsigned		mask;		/* 1 << enum quic_pkt_type */
+	unsigned		counted;	/* set with -count */
+	unsigned long		left;		/* packets -count still drops */
+};
+
 enum quic_close_type {
 	QUIC_OPEN = 0,
 #define QUIC_CLOSE_TYPE(U, l)	QUIC_CLOSE_##U,
@@ -174,6 +181,11 @@ struct quic_conn {
 	unsigned long		pkts_out;
 	unsigned long		drops_in;
 	unsigned long		drops_out;
+	unsigned long		pkt_drops_in;
+	unsigned long		pkt_drops_out;
+
+	/* [0] in, [1] out */
+	struct quic_pkt_filter	filter[2];
 
 	VTAILQ_HEAD(, h3_stream) streams;
 	unsigned		nstreams;
