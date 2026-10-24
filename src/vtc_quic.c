@@ -36,6 +36,7 @@
 #include "vtc_http.h"
 #include "vtc_quic.h"
 
+#include "vend.h"
 #include "vfil.h"
 #include "vnum.h"
 #include "vsa.h"
@@ -52,6 +53,51 @@ static const char * const quic_close_types[] = {
 	[QUIC_OPEN] = "open",
 #define QUIC_CLOSE_TYPE(U, l)	[QUIC_CLOSE_##U] = #l,
 #include "tbl/quic_close.h"
+};
+
+/*
+ * Packet types for the runtime filter. UNKNOWN is matched only by "all".
+ * PADDING is trailing zero bytes, not a packet: no filter matches it.
+ */
+enum quic_pkt_type {
+	QUIC_PKT_INITIAL,
+	QUIC_PKT_0RTT,
+	QUIC_PKT_HANDSHAKE,
+	QUIC_PKT_RETRY,
+	QUIC_PKT_1RTT,
+	QUIC_PKT_VN,
+	QUIC_PKT_UNKNOWN,
+	QUIC_PKT_PADDING,
+};
+
+#define QUIC_PKT_ALL		((1U << QUIC_PKT_PADDING) - 1)
+#define QUIC_PKT_MAX_SPLIT	16
+
+static const char * const quic_pkt_names[] = {
+	[QUIC_PKT_INITIAL] =	"Initial",
+	[QUIC_PKT_0RTT] =	"0-RTT",
+	[QUIC_PKT_HANDSHAKE] =	"Handshake",
+	[QUIC_PKT_RETRY] =	"Retry",
+	[QUIC_PKT_1RTT] =	"1-RTT",
+	[QUIC_PKT_VN] =		"Version Negotiation",
+	[QUIC_PKT_UNKNOWN] =	"unknown",
+	[QUIC_PKT_PADDING] =	"padding",
+};
+
+/* The TYPE names of quic_drop -pkt */
+static const char * const quic_pkt_keys[] = {
+	[QUIC_PKT_INITIAL] =	"initial",
+	[QUIC_PKT_0RTT] =	"0rtt",
+	[QUIC_PKT_HANDSHAKE] =	"handshake",
+	[QUIC_PKT_RETRY] =	"retry",
+	[QUIC_PKT_1RTT] =	"1rtt",
+	[QUIC_PKT_VN] =		"vn",
+};
+
+struct quic_pkt {
+	enum quic_pkt_type	type;
+	size_t			off;
+	size_t			len;
 };
 
 static pthread_once_t quic_once = PTHREAD_ONCE_INIT;
@@ -110,13 +156,15 @@ quic_ts(void)
  *	Drop chosen datagrams, to exercise loss recovery. SPEC is a comma
  *	separated list of ``out:N`` (the Nth datagram we send), ``in:N``
  *	(the Nth datagram we receive), ``out:every:N`` and ``in:every:N``.
- *	Repeatable.
+ *	Repeatable. The ``quic_drop`` command drops by packet type at
+ *	runtime; both apply.
  *
  * \-quic_debug
  *	Log ngtcp2's own debug output.
  *
- * Every datagram is logged at level 4. If the environment variable
- * SSLKEYLOGFILE is set, the TLS secrets are appended to that file.
+ * Every datagram is logged at level 4, with the packets it carries. If
+ * the environment variable SSLKEYLOGFILE is set, the TLS secrets are
+ * appended to that file.
  */
 
 struct quic_cfg *
@@ -353,36 +401,225 @@ quic_kick(const struct quic_conn *qc)
 	assert(write(qc->efd, &u, sizeof u) == sizeof u);
 }
 
+/* RFC 9000, 16: the length of the varint at p, 0 if it is cut short */
+static size_t
+quic_varint(const uint8_t *p, size_t len, uint64_t *v)
+{
+	size_t n, u;
+
+	if (len == 0)
+		return (0);
+	n = (size_t)1 << (p[0] >> 6);
+	if (n > len)
+		return (0);
+	*v = p[0] & 0x3f;
+	for (u = 1; u < n; u++)
+		*v = (*v << 8) | p[u];
+	return (n);
+}
+
+/*
+ * The type and length of the packet at p, the first of len bytes left in
+ * a datagram (RFC 9000, 17.2 and 17.3). Packets without a Length field,
+ * and packets whose end we cannot tell, are the rest of the datagram.
+ */
+static size_t
+quic_pkt_one(const uint8_t *p, size_t len, enum quic_pkt_type *type)
+{
+	enum quic_pkt_type t;
+	uint64_t v;
+	size_t off, n;
+	int i;
+
+	assert(len > 0);
+	for (n = 0; n < len && p[n] == 0; n++)
+		continue;
+	if (n == len) {
+		*type = QUIC_PKT_PADDING;
+		return (len);
+	}
+	if (!(p[0] & 0x80)) {
+		*type = QUIC_PKT_1RTT;
+		return (len);
+	}
+	*type = QUIC_PKT_UNKNOWN;
+	if (len < 5)
+		return (len);
+	v = vbe32dec(p + 1);
+	if (v == 0) {
+		*type = QUIC_PKT_VN;
+		return (len);
+	}
+	if (v != NGTCP2_PROTO_VER_V1)
+		return (len);
+	/* DCID and SCID */
+	off = 5;
+	for (i = 0; i < 2; i++) {
+		if (off >= len || p[off] > NGTCP2_MAX_CIDLEN)
+			return (len);
+		off += 1 + p[off];
+	}
+	if (off > len)
+		return (len);
+	t = (enum quic_pkt_type)((p[0] & 0x30) >> 4);
+	if (t == QUIC_PKT_RETRY) {
+		*type = t;
+		return (len);
+	}
+	if (t == QUIC_PKT_INITIAL) {
+		n = quic_varint(p + off, len - off, &v);
+		if (n == 0 || v > len - off - n)
+			return (len);
+		off += n + v;
+	}
+	n = quic_varint(p + off, len - off, &v);
+	if (n == 0 || v > len - off - n)
+		return (len);
+	*type = t;
+	return (off + n + v);
+}
+
+/*
+ * Split a datagram into its packets. The last of max entries takes the
+ * rest of the datagram, as an unknown packet.
+ */
+static unsigned
+quic_pkt_split(const uint8_t *p, size_t len, struct quic_pkt *pkt,
+    unsigned max)
+{
+	unsigned n;
+	size_t off;
+
+	assert(max > 0);
+	for (n = 0, off = 0; off < len && n < max; n++) {
+		pkt[n].off = off;
+		pkt[n].len = quic_pkt_one(p + off, len - off, &pkt[n].type);
+		if (n == max - 1 && off + pkt[n].len < len) {
+			pkt[n].type = QUIC_PKT_UNKNOWN;
+			pkt[n].len = len - off;
+		}
+		off += pkt[n].len;
+	}
+	return (n);
+}
+
 static void
 quic_log_pkt(const struct quic_conn *qc, const char *dir, const uint8_t *p,
     size_t len)
 {
-	static const char * const lt[4] = {
-	    "Initial", "0-RTT", "Handshake", "Retry"
-	};
+	struct quic_pkt pkt[QUIC_PKT_MAX_SPLIT];
 	ngtcp2_version_cid vc;
-	char cid[2 * NGTCP2_MAX_CIDLEN + 1];
-	size_t u;
+	struct vsb *vsb;
+	unsigned n, u;
+	size_t i;
 
 	if (len == 0)
 		return;
-	if (!(p[0] & 0x80)) {
-		vtc_log(qc->vl, 4, "%s %zu bytes: 1-RTT", dir, len);
-		return;
+	vsb = VSB_new_auto();
+	AN(vsb);
+	VSB_printf(vsb, "%s %zu bytes:", dir, len);
+	n = quic_pkt_split(p, len, pkt, QUIC_PKT_MAX_SPLIT);
+	for (u = 0; u < n; u++) {
+		VSB_printf(vsb, "%s %s", u ? "," : "",
+		    quic_pkt_names[pkt[u].type]);
+		if (n > 1)
+			VSB_printf(vsb, " (%zu)", pkt[u].len);
+		if (u > 0 || !(p[0] & 0x80) ||
+		    pkt[u].type == QUIC_PKT_PADDING ||
+		    ngtcp2_pkt_decode_version_cid(&vc, p, pkt[u].len,
+		    QUIC_SCID_LEN) != 0)
+			continue;
+		if (vc.version != 0)
+			VSB_printf(vsb, " v0x%x", vc.version);
+		VSB_cat(vsb, " dcid=");
+		for (i = 0; i < vc.dcidlen; i++)
+			VSB_printf(vsb, "%02x", vc.dcid[i]);
 	}
-	if (ngtcp2_pkt_decode_version_cid(&vc, p, len, QUIC_SCID_LEN) != 0) {
-		vtc_log(qc->vl, 4, "%s %zu bytes: undecodable", dir, len);
-		return;
+	AZ(VSB_finish(vsb));
+	vtc_log(qc->vl, 4, "%s", VSB_data(vsb));
+	VSB_destroy(&vsb);
+}
+
+/* The packet set of a filter, like "{handshake}", "!{initial}" or "{}" */
+static const char *
+quic_pkt_set(unsigned mask, char *buf, size_t len)
+{
+	const char *sep = "";
+	unsigned m, u;
+	size_t l;
+
+	if (mask == QUIC_PKT_ALL)
+		return ("{all}");
+	/* Only a complement holds UNKNOWN */
+	m = mask & (1U << QUIC_PKT_UNKNOWN) ? ~mask & QUIC_PKT_ALL : mask;
+	l = snprintf(buf, len, "%s{", m != mask ? "!" : "");
+	for (u = 0; u < QUIC_PKT_UNKNOWN; u++) {
+		if (!(m & (1U << u)) || l >= len)
+			continue;
+		l += snprintf(buf + l, len - l, "%s%s", sep, quic_pkt_keys[u]);
+		sep = ",";
 	}
-	for (u = 0; u < vc.dcidlen; u++)
-		(void)snprintf(cid + 2 * u, 3, "%02x", vc.dcid[u]);
-	cid[2 * vc.dcidlen] = '\0';
-	if (vc.version == 0)
-		vtc_log(qc->vl, 4, "%s %zu bytes: Version Negotiation dcid=%s",
-		    dir, len, cid);
-	else
-		vtc_log(qc->vl, 4, "%s %zu bytes: %s v0x%x dcid=%s", dir, len,
-		    lt[(p[0] & 0x30) >> 4], vc.version, cid);
+	if (l < len)
+		(void)snprintf(buf + l, len - l, "}");
+	return (buf);
+}
+
+/*
+ * Cut the packets that the runtime filter drops out of a datagram, in
+ * place, and update its length. Returns 1 if no packet is left.
+ */
+static int
+quic_cut(struct quic_conn *qc, unsigned out, uint8_t *buf, size_t *lenp,
+    unsigned long dgram)
+{
+	struct quic_pkt_filter *f;
+	struct quic_pkt pkt[QUIC_PKT_MAX_SPLIT];
+	unsigned n, npkt, u, cut = 0, kept = 0, initial = 0;
+	size_t len, l = 0;
+
+	f = &qc->filter[out];
+	len = *lenp;
+	if (f->mask == 0)
+		return (0);
+	n = quic_pkt_split(buf, len, pkt, QUIC_PKT_MAX_SPLIT);
+	npkt = n;
+	if (n > 0 && pkt[n - 1].type == QUIC_PKT_PADDING)
+		npkt--;
+	for (u = 0; u < n; u++) {
+		if (f->mask & (1U << pkt[u].type)) {
+			vtc_log(qc->vl, 3,
+			    "%s datagram #%lu: cut %s (%u of %u packets)",
+			    out ? "tx" : "rx", dgram,
+			    quic_pkt_names[pkt[u].type], u + 1, npkt);
+			if (out)
+				qc->pkt_drops_out++;
+			else
+				qc->pkt_drops_in++;
+			cut++;
+			if (f->counted && --f->left == 0) {
+				f->mask = 0;
+				PTOK(pthread_cond_broadcast(&qc->cond));
+			}
+			continue;
+		}
+		if (pkt[u].type != QUIC_PKT_PADDING)
+			kept++;
+		if (pkt[u].type == QUIC_PKT_INITIAL)
+			initial = 1;
+		memmove(buf + l, buf + pkt[u].off, pkt[u].len);
+		l += pkt[u].len;
+	}
+	if (cut == 0)
+		return (0);
+	if (kept == 0)
+		return (1);
+	/* RFC 9000, 14.1: keep a datagram with an Initial at 1200 bytes */
+	if (out && initial && len >= NGTCP2_MAX_UDP_PAYLOAD_SIZE) {
+		memset(buf + l, 0, len - l);
+		l = len;
+	}
+	*lenp = l;
+	return (0);
 }
 
 static int
@@ -429,7 +666,7 @@ quic_closed(struct quic_conn *qc)
 }
 
 static void
-quic_send(struct quic_conn *qc, const uint8_t *buf, size_t len)
+quic_send(struct quic_conn *qc, uint8_t *buf, size_t len)
 {
 	ssize_t l;
 
@@ -438,6 +675,12 @@ quic_send(struct quic_conn *qc, const uint8_t *buf, size_t len)
 	if (quic_drop(qc, 1, qc->pkts_out)) {
 		qc->drops_out++;
 		vtc_log(qc->vl, 3, "tx datagram #%lu dropped", qc->pkts_out);
+		return;
+	}
+	if (quic_cut(qc, 1, buf, &len, qc->pkts_out)) {
+		qc->drops_out++;
+		vtc_log(qc->vl, 3, "tx datagram #%lu dropped, all packets cut",
+		    qc->pkts_out);
 		return;
 	}
 	do {
@@ -767,6 +1010,7 @@ quic_read(struct quic_conn *qc)
 	ngtcp2_pkt_info pi;
 	ngtcp2_path path;
 	ssize_t n;
+	size_t len;
 	int i;
 
 	while (qc->close_type == QUIC_OPEN) {
@@ -788,13 +1032,21 @@ quic_read(struct quic_conn *qc)
 			    qc->pkts_in);
 			continue;
 		}
+		len = (size_t)n;
+		if (quic_cut(qc, 0, buf, &len, qc->pkts_in)) {
+			qc->drops_in++;
+			vtc_log(qc->vl, 3,
+			    "rx datagram #%lu dropped, all packets cut",
+			    qc->pkts_in);
+			continue;
+		}
 		memset(&pi, 0, sizeof pi);
 		path.local.addr = (struct sockaddr *)&qc->local;
 		path.local.addrlen = qc->locallen;
 		path.remote.addr = (struct sockaddr *)&ss;
 		path.remote.addrlen = sl;
 		path.user_data = NULL;
-		i = ngtcp2_conn_read_pkt(qc->conn, &path, &pi, buf, n,
+		i = ngtcp2_conn_read_pkt(qc->conn, &path, &pi, buf, len,
 		    quic_ts());
 		if (i != 0)
 			quic_fail_locked(qc, i);
@@ -1353,6 +1605,164 @@ quic_cmd_confirmed(struct quic_conn *qc, char * const *av,
 		vtc_fatal(vl, "Handshake not confirmed");
 }
 
+static unsigned
+quic_pkt_parse(const char *arg, struct vtclog *vl)
+{
+	char *buf, *tok, *p;
+	unsigned mask = 0, neg = 0, u;
+
+	if (*arg == '!') {
+		neg = 1;
+		arg++;
+	}
+	buf = strdup(arg);
+	AN(buf);
+	p = buf;
+	do {
+		tok = strsep(&p, ",");
+		if (!strcmp(tok, "all")) {
+			mask = QUIC_PKT_ALL;
+			continue;
+		}
+		for (u = 0; u < QUIC_PKT_UNKNOWN; u++)
+			if (!strcmp(tok, quic_pkt_keys[u]))
+				break;
+		if (u == QUIC_PKT_UNKNOWN)
+			vtc_fatal(vl, "quic_drop: unknown packet type \"%s\"",
+			    tok);
+		mask |= 1U << u;
+	} while (p != NULL);
+	free(buf);
+	return (neg ? ~mask & QUIC_PKT_ALL : mask);
+}
+
+/* SECTION: stream.spec.quic_drop quic_drop
+ *
+ * quic_drop -in|-out -pkt [!]TYPE[,TYPE...] [-count N [-wait]]
+ *
+ * quic_drop -in|-out -wait (HTTP/3 only)
+ *	Drop the packets of the given types that we receive (``-in``) or
+ *	send (``-out``) from now on, to simulate loss. TYPE is one of
+ *	``initial``, ``0rtt``, ``handshake``, ``retry``, ``1rtt`` (which
+ *	includes stateless resets), ``vn`` (Version Negotiation) and
+ *	``all`` (also packets of no known type). ``!`` complements the set:
+ *	``!all`` drops nothing and so turns the filter off.
+ *
+ *	The packets are cut out of their datagram, the other packets in it
+ *	go through; a datagram is dropped only when no packet is left. An
+ *	outgoing datagram that keeps an Initial packet keeps its length,
+ *	padded with zeros. Each command replaces the filter of its
+ *	direction. ``-quic_drop`` on the client line still applies.
+ *
+ *	The command works before ``tls_handshake``: the filter then applies
+ *	to the first Initial.
+ *
+ *	\-count N
+ *		Drop only the next N matching packets, then turn the filter
+ *		off. Without it, the filter stays until the next
+ *		``quic_drop`` for its direction.
+ *
+ *	\-wait
+ *		Wait until the ``-count`` of the direction is used up. With
+ *		``-pkt`` and ``-count`` the command sets the filter and
+ *		waits, alone it waits for the count an earlier command set.
+ *		It is fatal if the filter has no ``-count``, on timeout,
+ *		and when the connection closes first. ``-wait`` needs the
+ *		connection started (``tls_handshake``).
+ *
+ * Without ``-quic_drop`` and ``quic_drop``, every datagram reaches its
+ * destination. The ``quic.pkt_drops_*`` and ``quic.drop.*`` variables
+ * count what ``quic_drop`` cut.
+ */
+static void
+quic_cmd_drop(struct quic_conn *qc, char * const *av, struct vtclog *vl)
+{
+	struct quic_pkt_filter *f;
+	const char *dir = NULL, *pkt = NULL;
+	char buf[64], *p;
+	unsigned out = 0, mask = 0, counted = 0, wait = 0, closed;
+	unsigned long count = 0;
+	double deadline;
+	int i = 0;
+
+	for (av++; *av != NULL; av++) {
+		if (!strcmp(*av, "-in") || !strcmp(*av, "-out")) {
+			if (dir != NULL)
+				vtc_fatal(vl, "quic_drop: give one of -in and "
+				    "-out");
+			dir = *av + 1;
+			out = !strcmp(*av, "-out");
+		} else if (!strcmp(*av, "-pkt") && av[1] != NULL) {
+			pkt = av[1];
+			av++;
+		} else if (!strcmp(*av, "-frame")) {
+			vtc_fatal(vl, "quic_drop: -frame is not implemented");
+		} else if (!strcmp(*av, "-count") && av[1] != NULL) {
+			errno = 0;
+			count = strtoul(av[1], &p, 0);
+			if (errno != 0 || *p != '\0' || count == 0 ||
+			    *av[1] == '-')
+				vtc_fatal(vl, "quic_drop: bad -count %s",
+				    av[1]);
+			counted = 1;
+			av++;
+		} else if (!strcmp(*av, "-wait")) {
+			wait = 1;
+		} else
+			vtc_fatal(vl, "Unknown quic_drop spec: %s", *av);
+	}
+	if (dir == NULL)
+		vtc_fatal(vl, "quic_drop: needs -in or -out");
+	if (pkt == NULL && (!wait || counted))
+		vtc_fatal(vl, "quic_drop: needs -pkt");
+	if (pkt != NULL && wait && !counted)
+		vtc_fatal(vl, "quic_drop: -wait needs -count");
+	if (pkt != NULL) {
+		mask = quic_pkt_parse(pkt, vl);
+		if (counted && mask == 0)
+			vtc_fatal(vl, "quic_drop: -count with no packet type");
+	}
+	if (wait)
+		quic_need_started(qc, "quic_drop", vl);
+
+	f = &qc->filter[out];
+	if (pkt != NULL) {
+		PTOK(pthread_mutex_lock(&qc->mtx));
+		f->mask = mask;
+		f->counted = counted;
+		f->left = count;
+		PTOK(pthread_mutex_unlock(&qc->mtx));
+		if (counted)
+			vtc_log(vl, 3, "quic_drop: %s pkt=%s count %lu", dir,
+			    quic_pkt_set(mask, buf, sizeof buf), count);
+		else
+			vtc_log(vl, 3, "quic_drop: %s pkt=%s", dir,
+			    quic_pkt_set(mask, buf, sizeof buf));
+	}
+	if (!wait)
+		return;
+
+	deadline = VTIM_real() + qc->hp->timeout;
+	PTOK(pthread_mutex_lock(&qc->mtx));
+	while (f->counted && f->left > 0 && qc->close_type == QUIC_OPEN &&
+	    !qc->stop && i != ETIMEDOUT)
+		i = quic_cond_wait(&qc->cond, qc, deadline);
+	counted = f->counted;
+	count = f->left;
+	mask = f->mask;
+	closed = qc->close_type != QUIC_OPEN || qc->stop;
+	PTOK(pthread_mutex_unlock(&qc->mtx));
+	if (!counted)
+		vtc_fatal(vl, "quic_drop: -wait: the %s filter has no -count",
+		    dir);
+	if (count > 0)
+		vtc_fatal(vl, "quic_drop: -wait: %s, %lu %s packet%s of %s "
+		    "still to drop", closed ? "connection closed" : "timeout",
+		    count, dir, count > 1 ? "s" : "",
+		    quic_pkt_set(mask, buf, sizeof buf));
+	vtc_log(vl, 3, "quic_drop: %s count used up", dir);
+}
+
 /* SECTION: stream.spec.rxgoaway_h3 rxgoaway (HTTP/3)
  *
  * In HTTP/3 mode ``rxgoaway`` waits for the server's next GOAWAY frame.
@@ -1422,6 +1832,8 @@ quic_conn_cmd(struct http *hp, char * const *av, struct vtclog *vl)
 		quic_cmd_rebind(qc, av, vl);
 	else if (!strcmp(av[0], "quic_wait_handshake_confirmed"))
 		quic_cmd_confirmed(qc, av, vl);
+	else if (!strcmp(av[0], "quic_drop"))
+		quic_cmd_drop(qc, av, vl);
 	else if (!strcmp(av[0], "rxgoaway") || !strcmp(av[0], "txgoaway"))
 		quic_cmd_goaway(qc, av, vl);
 	else
@@ -1511,7 +1923,15 @@ quic_expect_close(struct http *hp, struct vtclog *vl)
  *	max_udp_payload_size, active_connection_id_limit.
  *
  * quic.pkts_in / quic.pkts_out / quic.drops_in / quic.drops_out
- *	Datagram counters.
+ *	Datagram counters. A datagram counts as dropped when ``-quic_drop``
+ *	dropped it, or when ``quic_drop`` cut all its packets.
+ *
+ * quic.pkt_drops_in / quic.pkt_drops_out
+ *	Packets that ``quic_drop`` cut.
+ *
+ * quic.drop.in / quic.drop.out
+ *	Packets that the ``-count`` of ``quic_drop`` still drops, 0 when no
+ *	count is active.
  *
  * goaway.id
  *	The id of the last GOAWAY received.
@@ -1620,6 +2040,17 @@ quic_var_locked(struct quic_conn *qc, const char *spec, char *buf,
 		return (TF(qc->close_app));
 	if (!strcmp(spec, "close.reason"))
 		return (qc->close_reason);
+	if (!strcmp(spec, "pkt_drops_in") || !strcmp(spec, "pkt_drops_out") ||
+	    !strcmp(spec, "drop.in") || !strcmp(spec, "drop.out")) {
+		if (!strcmp(spec, "pkt_drops_in"))
+			(void)snprintf(buf, len, "%lu", qc->pkt_drops_in);
+		else if (!strcmp(spec, "pkt_drops_out"))
+			(void)snprintf(buf, len, "%lu", qc->pkt_drops_out);
+		else
+			(void)snprintf(buf, len, "%lu",
+			    qc->filter[!strcmp(spec, "drop.out")].left);
+		return (buf);
+	}
 	if (!strcmp(spec, "close.err") || !strcmp(spec, "version") ||
 	    !strcmp(spec, "pkts_in") || !strcmp(spec, "pkts_out") ||
 	    !strcmp(spec, "drops_in") || !strcmp(spec, "drops_out")) {

@@ -30,3 +30,129 @@ client c3 -quic -connect ${bad_backend} -quic_drop out:every:1 \
 	tls_handshake
 	expect quic.pkts_out == quic.drops_out
 } -run
+
+# quic_drop: every packet type, "!", -count, before tls_handshake and in
+# stream 0.
+client c4 -quic -connect ${bad_backend} -quic_param handshake_timeout=0.5 {
+	quic_drop -in -pkt initial,0rtt,handshake,retry,1rtt,vn
+	quic_drop -in -pkt all
+	quic_drop -in -pkt !all
+	quic_drop -in -pkt !initial,1rtt
+	quic_drop -out -pkt handshake -count 3
+	expect quic.drop.out == 3
+	expect quic.drop.in == 0
+	quic_drop -out -pkt 1rtt
+	expect quic.drop.out == 0
+	stream 0 {
+		quic_drop -in -pkt vn -count 2
+		expect quic.drop.in == 2
+		quic_drop -in -pkt !all
+		expect quic.drop.in == 0
+	} -run
+	expect quic.pkt_drops_in == 0
+} -run
+
+# Cutting every packet we send: the handshake times out.
+client c5 -quic -connect ${bad_backend} -quic_param handshake_timeout=0.5 {
+	quic_drop -out -pkt all
+	tls_handshake
+	expect quic.close.type == handshake_timeout
+	expect quic.pkt_drops_out > 0
+	expect quic.drops_out == quic.pkts_out
+	expect quic.drop.out == 0
+} -run
+
+# A count set before tls_handshake, waited for after it. The connection
+# closed, but the count was used up before.
+client c6 -quic -connect ${bad_backend} -quic_param handshake_timeout=0.5 {
+	quic_drop -out -pkt initial -count 1
+	expect quic.drop.out == 1
+	tls_handshake
+	quic_drop -out -wait
+	expect quic.pkt_drops_out == 1
+	expect quic.drops_out == 1
+	expect quic.drop.out == 0
+	expect quic.pkts_out > 1
+} -run
+
+# Set and wait in one command: the Initial sent again on PTO is lost.
+client c7 -quic -connect ${bad_backend} -quic_param handshake_timeout=5 {
+	stream 0 {
+		quic_drop -out -pkt initial -count 1 -wait
+		expect quic.pkt_drops_out == 1
+		expect quic.drop.out == 0
+	} -run
+} -run
+
+# The fatal errors of quic_drop, each in a test of its own. fail.sh runs
+# the client specification on stdin, with the client arguments in $2.
+shell {
+	cat >fail.sh <<-'EOF'
+	{
+		echo 'vtest "quic_drop failure"'
+		echo 'feature quic'
+		echo "client c1 -quic -connect $1 $2 {"
+		cat
+		echo '} -run'
+	} >_.vtc
+	exec vtest -v _.vtc
+	EOF
+}
+
+shell -exit 2 -expect {quic_drop: unknown packet type "bogus"} {
+	echo 'quic_drop -in -pkt initial,bogus' | sh fail.sh ${bad_backend}
+}
+
+shell -exit 2 -expect {quic_drop: needs -in or -out} {
+	echo 'quic_drop -pkt all' | sh fail.sh ${bad_backend}
+}
+
+shell -exit 2 -expect {quic_drop: give one of -in and -out} {
+	echo 'quic_drop -in -out -pkt all' | sh fail.sh ${bad_backend}
+}
+
+shell -exit 2 -expect {quic_drop: needs -pkt} {
+	echo 'quic_drop -in' | sh fail.sh ${bad_backend}
+}
+
+shell -exit 2 -expect {quic_drop: needs -pkt} {
+	echo 'quic_drop -in -count 1 -wait' | sh fail.sh ${bad_backend}
+}
+
+shell -exit 2 -expect {quic_drop: -frame is not implemented} {
+	echo 'quic_drop -in -frame ack' | sh fail.sh ${bad_backend}
+}
+
+shell -exit 2 -expect {quic_drop: bad -count 0} {
+	echo 'quic_drop -in -pkt all -count 0' | sh fail.sh ${bad_backend}
+}
+
+shell -exit 2 -expect {quic_drop: -count with no packet type} {
+	echo 'quic_drop -in -pkt !all -count 1' | sh fail.sh ${bad_backend}
+}
+
+shell -exit 2 -expect {quic_drop: -wait needs -count} {
+	echo 'quic_drop -in -pkt all -wait' | sh fail.sh ${bad_backend}
+}
+
+shell -exit 2 -expect {quic_drop: no QUIC connection yet} {
+	echo 'quic_drop -in -pkt all -count 1 -wait' | sh fail.sh ${bad_backend}
+}
+
+shell -exit 2 -expect {quic_drop: -wait: the in filter has no -count} {
+	printf '%s\n' 'quic_drop -in -pkt all' 'tls_handshake' \
+	    'quic_drop -in -wait' |
+	    sh fail.sh ${bad_backend} '-quic_param handshake_timeout=0.5'
+}
+
+shell -exit 2 -expect {quic_drop: -wait: connection closed, 1 in packet of {handshake} still to drop} {
+	printf '%s\n' 'quic_drop -in -pkt handshake -count 1' 'tls_handshake' \
+	    'quic_drop -in -wait' |
+	    sh fail.sh ${bad_backend} '-quic_param handshake_timeout=0.5'
+}
+
+shell -exit 2 -expect {quic_drop: -wait: timeout, 2 out packets of !{initial} still to drop} {
+	printf '%s\n' 'timeout 0.5' 'stream 0 {' \
+	    'quic_drop -out -pkt !initial -count 2 -wait' '} -run' |
+	    sh fail.sh ${bad_backend} '-quic_param handshake_timeout=5'
+}
