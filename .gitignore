@@ -13,3 +13,4 @@ lib/.deps/
 lib/.dirstamp
 
 *~
+.envrc
