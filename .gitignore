@@ -16,3 +16,4 @@ lib/.dirstamp
 src/.libs/
 src/*.lo
 *~
+.envrc
