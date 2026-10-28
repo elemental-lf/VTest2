@@ -315,6 +315,9 @@ vtc_alpn_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
  *	The list of ALPN protocols supported by the client or the server.
  *	The most relevant tokens are ``h2`` and ``http/1.1``. ALPN tokens
  *	are ordered by preference.
+ *
+ *	A client with an empty list (``alpn =``) sends no ALPN extension,
+ *	also on QUIC, where the ALPN otherwise defaults to ``h3``.
  */
 static void
 cmd_tls_cfg_alpn(CMD_ARGS)
@@ -326,10 +329,11 @@ cmd_tls_cfg_alpn(CMD_ARGS)
 	CAST_OBJ_NOTNULL(cfg, priv, TLSCTX_MAGIC);
 	AN(av[0]);
 	AN(av[1]);
-	AN(av[2]);
 
 	AZ(strcmp(av[0], "alpn"));
 	AZ(strcmp(av[1], "="));
+	if (av[2] == NULL && cfg->type == TLS_SERVER)
+		vtc_fatal(vl, "empty 'alpn' list on a server");
 
 	vsb = VSB_new_auto();
 	while (av[2] != NULL) {
