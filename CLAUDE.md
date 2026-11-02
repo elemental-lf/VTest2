@@ -177,6 +177,7 @@ VTest2 includes comprehensive TLS support ported from Varnish Cache Plus. See `T
 - `version = PROTO_MIN [PROTO_MAX]` - Set TLS version range (SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3)
 - `cipher_list = CIPHER[:CIPHER...]` - Set cipher list for TLS ≤ 1.2
 - `ciphersuites = CIPHER[:CIPHER...]` - Set cipher suites for TLS 1.3
+- `groups = GROUP[:GROUP...]` - Set the key exchange groups (default: OpenSSL and its configuration)
 - `alpn = PROTO [PROTO...]` - Set ALPN protocol list (e.g., "h2 http/1.1")
 
 **Server-only:**

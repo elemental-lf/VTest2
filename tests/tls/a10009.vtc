@@ -1,0 +1,46 @@
+varnishtest "tls_config groups"
+
+feature tls
+
+# A common group
+server s1 {
+	tls_config {
+		groups = P-256:X25519
+	}
+	tls_handshake
+	expect tls.failed == false
+	rxreq
+	txresp
+} -start
+
+client c1 -connect ${s1_sock} {
+	tls_config {
+		groups = X25519
+	}
+	tls_handshake
+	expect tls.failed == false
+	txreq
+	rxresp
+	expect resp.status == 200
+} -run
+
+server s1 -wait
+
+# No common group
+server s1 {
+	tls_config {
+		groups = P-256
+	}
+	tls_handshake
+	expect tls.failed == true
+} -start
+
+client c1 -connect ${s1_sock} {
+	tls_config {
+		groups = X25519
+	}
+	tls_handshake
+	expect tls.failed == true
+} -run
+
+server s1 -wait

@@ -10,6 +10,9 @@ TLS_CMD(alpn)
 #if defined(TLS1_3_VERSION) || OPENSSL_VERSION_NUMBER >= 0x10101000L
 TLS_CMD(ciphersuites)
 #endif
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+TLS_CMD(groups)
+#endif
 
 #ifdef TLS_CLIENT
 TLS_CMD(servername)

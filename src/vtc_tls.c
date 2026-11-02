@@ -436,6 +436,44 @@ cmd_tls_cfg_ciphersuites(CMD_ARGS)
 }
 #endif
 
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+/* SECTION: tls_config.spec.groups
+ *
+ * groups
+ *	groups = GROUP[:GROUP...]
+ *
+ *	The key exchange groups, in the syntax of OpenSSL's
+ *	``SSL_CTX_set1_groups_list()``, in order of preference. A client
+ *	sends a key share for the first group only, unless the list marks
+ *	the groups with a key share with ``*`` (OpenSSL 3.5 or later).
+ *
+ *	The default comes from OpenSSL and its configuration, and can thus
+ *	differ between systems. Set the groups when a test depends on the
+ *	size of the ClientHello: for example, ``*X25519MLKEM768:*X25519``
+ *	makes a QUIC ClientHello take two Initial packets.
+ *
+ *	An unknown group is fatal, unless it has OpenSSL's ``?`` prefix.
+ */
+static void
+cmd_tls_cfg_groups(CMD_ARGS)
+{
+	struct tlsctx *cfg;
+
+	CAST_OBJ_NOTNULL(cfg, priv, TLSCTX_MAGIC);
+	AN(av[0]);
+	AN(av[1]);
+	AN(av[2]);
+	AZ(av[3]);
+
+	AZ(strcmp(av[0], "groups"));
+	AZ(strcmp(av[1], "="));
+	if (SSL_CTX_set1_groups_list(cfg->ctx, av[2]) != 1) {
+		vtc_tlserr(vl);
+		vtc_fatal(vl, "invalid 'groups' configuration '%s'", av[2]);
+	}
+}
+#endif
+
 /* SECTION: tls_config.spec.servername
  *
  * servername (client only)
