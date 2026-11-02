@@ -307,6 +307,9 @@ This allows the same code to work with multiple OpenSSL versions.
   - Values: SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3
 - **cipher_list = CIPHER[:CIPHER...]** - Set cipher list for TLS ≤ 1.2
 - **ciphersuites = CIPHER[:CIPHER...]** - Set cipher suites for TLS 1.3
+- **groups = GROUP[:GROUP...]** - Set the key exchange groups (`SSL_CTX_set1_groups_list()`).
+  The default depends on OpenSSL and its configuration, so set it when a test depends on the
+  size of the ClientHello
 - **alpn = PROTO [PROTO...]** - Set ALPN protocol list (e.g., "h2 http/1.1")
 
 ### Server-Only Commands
