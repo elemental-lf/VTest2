@@ -183,6 +183,8 @@ struct quic_conn {
 	unsigned long		drops_out;
 	unsigned long		pkt_drops_in;
 	unsigned long		pkt_drops_out;
+	unsigned long		initials_out;
+	unsigned long		first_flight_initials;
 
 	/* [0] in, [1] out */
 	struct quic_pkt_filter	filter[2];

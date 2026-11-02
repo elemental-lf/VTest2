@@ -1,0 +1,40 @@
+vtest "QUIC: the groups decide how many Initial packets the ClientHello takes"
+
+feature quic
+
+# Nothing listens on this UDP port. The handshake times out before the
+# first PTO (about 1 s), so the client sends only its first flight: the
+# ClientHello.
+
+# The key share of X25519MLKEM768 alone is 1216 bytes.
+client c1 -quic -connect ${bad_backend} -quic_param handshake_timeout=0.5 {
+	tls_config {
+		groups = *X25519MLKEM768:*X25519
+	}
+	tls_handshake
+	expect quic.close.type == handshake_timeout
+	expect quic.pkts_in == 0
+	expect quic.first_flight_initials == 2
+	expect quic.initials_out == 2
+} -run
+
+client c2 -quic -connect ${bad_backend} -quic_param handshake_timeout=0.5 {
+	tls_config {
+		groups = X25519
+	}
+	tls_handshake
+	expect quic.close.type == handshake_timeout
+	expect quic.first_flight_initials == 1
+	expect quic.initials_out == 1
+} -run
+
+# A cut Initial counts too.
+client c3 -quic -connect ${bad_backend} -quic_param handshake_timeout=0.5 {
+	tls_config {
+		groups = *X25519MLKEM768:*X25519
+	}
+	quic_drop -out -pkt initial -count 1
+	tls_handshake
+	expect quic.pkt_drops_out == 1
+	expect quic.first_flight_initials == 2
+} -run

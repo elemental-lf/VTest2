@@ -322,6 +322,11 @@ Counters and variables:
 - `quic.pkt_drops_in` and `quic.pkt_drops_out` count packets that `quic_drop` cut.
 - `quic.drop.in` and `quic.drop.out` are the packets that the current `-count` still drops,
   0 when no count is active.
+- `quic.initials_out` counts the Initial packets that `quic_send()` gets, before any filter.
+  `quic.first_flight_initials` is the part of it before the first datagram arrived
+  (`pkts_in == 0`): the Initial packets of the ClientHello, if the server answers before
+  the first PTO. A test that depends on it sets `groups` in `tls_config`: OpenSSL 3.5 with
+  `*X25519MLKEM768:*X25519` gives 2, `X25519` gives 1.
 
 ### TLS integration
 

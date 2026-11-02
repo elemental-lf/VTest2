@@ -665,6 +665,25 @@ quic_closed(struct quic_conn *qc)
 	h3_conn_closed(qc);
 }
 
+/* Count the Initial packets of a datagram we send, before any filter */
+static void
+quic_count_initials(struct quic_conn *qc, const uint8_t *buf, size_t len)
+{
+	struct quic_pkt pkt[QUIC_PKT_MAX_SPLIT];
+	unsigned n, u;
+
+	if (len == 0 || !(buf[0] & 0x80))
+		return;
+	n = quic_pkt_split(buf, len, pkt, QUIC_PKT_MAX_SPLIT);
+	for (u = 0; u < n; u++) {
+		if (pkt[u].type != QUIC_PKT_INITIAL)
+			continue;
+		qc->initials_out++;
+		if (qc->pkts_in == 0)
+			qc->first_flight_initials++;
+	}
+}
+
 static void
 quic_send(struct quic_conn *qc, uint8_t *buf, size_t len)
 {
@@ -672,6 +691,7 @@ quic_send(struct quic_conn *qc, uint8_t *buf, size_t len)
 
 	qc->pkts_out++;
 	quic_log_pkt(qc, "tx", buf, len);
+	quic_count_initials(qc, buf, len);
 	if (quic_drop(qc, 1, qc->pkts_out)) {
 		qc->drops_out++;
 		vtc_log(qc->vl, 3, "tx datagram #%lu dropped", qc->pkts_out);
@@ -1929,6 +1949,17 @@ quic_expect_close(struct http *hp, struct vtclog *vl)
  * quic.pkt_drops_in / quic.pkt_drops_out
  *	Packets that ``quic_drop`` cut.
  *
+ * quic.initials_out
+ *	Initial packets we sent, counted before ``-quic_drop`` and
+ *	``quic_drop``.
+ *
+ * quic.first_flight_initials
+ *	The part of ``quic.initials_out`` sent before the first datagram
+ *	from the server arrived. If the server answers before our first
+ *	PTO, this is the number of Initial packets that carry the
+ *	ClientHello. Set ``groups`` in ``tls_config`` when a test depends
+ *	on it.
+ *
  * quic.drop.in / quic.drop.out
  *	Packets that the ``-count`` of ``quic_drop`` still drops, 0 when no
  *	count is active.
@@ -2049,6 +2080,14 @@ quic_var_locked(struct quic_conn *qc, const char *spec, char *buf,
 		else
 			(void)snprintf(buf, len, "%lu",
 			    qc->filter[!strcmp(spec, "drop.out")].left);
+		return (buf);
+	}
+	if (!strcmp(spec, "initials_out")) {
+		(void)snprintf(buf, len, "%lu", qc->initials_out);
+		return (buf);
+	}
+	if (!strcmp(spec, "first_flight_initials")) {
+		(void)snprintf(buf, len, "%lu", qc->first_flight_initials);
 		return (buf);
 	}
 	if (!strcmp(spec, "close.err") || !strcmp(spec, "version") ||
