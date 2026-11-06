@@ -151,7 +151,7 @@ cert_load(struct vtclog *vl, struct tlsctx *cfg, BIO *src)
 		vtc_fatal(vl, "Unable to configure cert chain");
 	}
 
-	BIO_reset(src);
+	(void) BIO_reset(src);
 	pk = PEM_read_bio_PrivateKey(src, NULL, NULL, NULL);
 	if (pk == NULL) {
 		vtc_tlserr(vl);
