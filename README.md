@@ -1,6 +1,7 @@
 # VTest2
 
-HTTP test program derived from Varnish's varnishtest. Tests HTTP clients, servers, and proxies using `.vtc` test scripts.
+HTTP test program derived from Varnish's varnishtest. Tests HTTP clients, servers, and proxies using `.vtc` test
+scripts.
 
 Plug-in replacement for [vtest1](https://github.com/vtest/VTest).
 
@@ -13,6 +14,12 @@ make test                               # Build and run tests
 ```
 
 ### HTTP/3 (QUIC) client
+
+> **Disclaimer: The HTTP/3 client was coded by Claude Code (Opus 5.5) with only
+minimal supervision. A thorough review of this code is still outstanding.
+The code should be mostly okay as it has been tested against another server
+implementation, but you have been warned. See `QUIC-IMPL.md` for
+implementation details.**
 
 `WITH_QUIC=1` adds an HTTP/3 client (`client cNAME -quic`, see `feature quic`), built on
 ngtcp2's OpenSSL backend and nghttp3:
@@ -40,7 +47,8 @@ Test files start with `vtest` or `varnishtest` followed by a description. See `t
 
 ## Syncing with Varnish-Cache
 
-For maintainers: `make update` syncs shared code from Varnish-Cache. Set `VARNISHSRC` to use a local repo instead of cloning.
+For maintainers: `make update` syncs shared code from Varnish-Cache. Set `VARNISHSRC` to use a local repo instead of
+cloning.
 
 See `CLAUDE.md` for architecture details, `TLS-IMPL.md` for TLS support documentation and `QUIC-IMPL.md` for
 the QUIC and HTTP/3 client.
