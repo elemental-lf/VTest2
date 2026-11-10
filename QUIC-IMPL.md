@@ -435,8 +435,10 @@ important paths:
   the reset testable (see "Tests against a server").
 - `quic_rebind` closes the old socket at once. Packets that the server sends to the old port
   are lost.
-- A NAT rebinding followed by an active migration stalled against one server. Each one alone
-  works. The cause is not known. It can be in the client, in ngtcp2 or in the server.
+- A NAT rebinding followed by an active migration fails against a server with ngtcp2 before
+  1.26.0, if the migration starts while the server still validates the old path. The server
+  retires a connection ID that it still uses, and closes the connection with
+  CONNECTION_ID_LIMIT_ERROR. Each one alone works. The client is not the cause.
 - The rx commands wait at most `hp->timeout` for each event. A long transfer is not limited,
   but a pause of the server longer than `hp->timeout` is fatal.
 - Not available: an HTTP/3 server, `-keepalive`, `-proxy1`/`-proxy2`, QUIC v2, and raw HTTP/3
