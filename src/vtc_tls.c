@@ -216,8 +216,8 @@ cmd_tls_cfg_cert(CMD_ARGS)
 	ARGN(vl, av, 2);
 	ARGZ(vl, av, 3);
 
-	AZ(strcmp(av[0], "cert"));
-	AZ(strcmp(av[1], "="));
+	AZ(vstrcmp(av[0], "cert"));
+	AZ(vstrcmp(av[1], "="));
 
 	bio = BIO_new_file(av[2], "r");
 	if (!bio)
@@ -258,8 +258,8 @@ cmd_tls_cfg_version(CMD_ARGS)
 	ARGN(vl, av, 1);
 	ARGN(vl, av, 2);
 
-	AZ(strcmp(av[0], "version"));
-	AZ(strcmp(av[1], "="));
+	AZ(vstrcmp(av[0], "version"));
+	AZ(vstrcmp(av[1], "="));
 	proto_min = string2version(vl, av[2]);
 	proto_max = proto_min;
 	if (av[3] != NULL) {
@@ -330,14 +330,14 @@ cmd_tls_cfg_alpn(CMD_ARGS)
 	AN(av[0]);
 	ARGN(vl, av, 1);
 
-	AZ(strcmp(av[0], "alpn"));
-	AZ(strcmp(av[1], "="));
+	AZ(vstrcmp(av[0], "alpn"));
+	AZ(vstrcmp(av[1], "="));
 	if (av[2] == NULL && cfg->type == TLS_SERVER)
 		vtc_fatal(vl, "empty 'alpn' list on a server");
 
 	vsb = VSB_new_auto();
 	while (av[2] != NULL) {
-		l = strlen(av[2]);
+		l = vstrlen(av[2]);
 		assert(l < 255);	/* XXX: lower or equal? */
 		AZ(VSB_putc(vsb, l));
 		AZ(VSB_bcat(vsb, av[2], l));
@@ -384,8 +384,8 @@ cmd_tls_cfg_cipher_list(CMD_ARGS)
 	ARGN(vl, av, 2);
 	ARGZ(vl, av, 3);
 
-	AZ(strcmp(av[0], "cipher_list"));
-	AZ(strcmp(av[1], "="));
+	AZ(vstrcmp(av[0], "cipher_list"));
+	AZ(vstrcmp(av[1], "="));
 	if (SSL_CTX_set_cipher_list(cfg->ctx, av[2]) != 1) {
 		vtc_tlserr(vl);
 		vtc_fatal(vl, "invalid 'cipher_list' configuration '%s'",
@@ -426,8 +426,8 @@ cmd_tls_cfg_ciphersuites(CMD_ARGS)
 	ARGN(vl, av, 2);
 	ARGZ(vl, av, 3);
 
-	AZ(strcmp(av[0], "ciphersuites"));
-	AZ(strcmp(av[1], "="));
+	AZ(vstrcmp(av[0], "ciphersuites"));
+	AZ(vstrcmp(av[1], "="));
 	if (SSL_CTX_set_ciphersuites(cfg->ctx, av[2]) != 1) {
 		vtc_tlserr(vl);
 		vtc_fatal(vl, "invalid 'ciphersuites' configuration '%s'",
@@ -465,8 +465,8 @@ cmd_tls_cfg_groups(CMD_ARGS)
 	AN(av[2]);
 	AZ(av[3]);
 
-	AZ(strcmp(av[0], "groups"));
-	AZ(strcmp(av[1], "="));
+	AZ(vstrcmp(av[0], "groups"));
+	AZ(vstrcmp(av[1], "="));
 	if (SSL_CTX_set1_groups_list(cfg->ctx, av[2]) != 1) {
 		vtc_tlserr(vl);
 		vtc_fatal(vl, "invalid 'groups' configuration '%s'", av[2]);
@@ -495,8 +495,8 @@ cmd_tls_cfg_servername(CMD_ARGS)
 	ARGZ(vl, av, 3);
 
 
-	AZ(strcmp(av[0], "servername"));
-	AZ(strcmp(av[1], "="));
+	AZ(vstrcmp(av[0], "servername"));
+	AZ(vstrcmp(av[1], "="));
 	cfg->c->servername = av[2];
 }
 
@@ -524,8 +524,8 @@ cmd_tls_cfg_verify_peer(CMD_ARGS)
 	ARGN(vl, av, 2);
 	ARGZ(vl, av, 3);
 
-	AZ(strcmp(av[0], "verify_peer"));
-	AZ(strcmp(av[1], "="));
+	AZ(vstrcmp(av[0], "verify_peer"));
+	AZ(vstrcmp(av[1], "="));
 	if (!strcasecmp(av[2], "true"))
 		mode = SSL_VERIFY_PEER;
 	else if (!strcasecmp(av[2], "false"))
@@ -577,8 +577,8 @@ cmd_tls_cfg_sess_out(CMD_ARGS)
 	ARGN(vl, av, 1);
 	ARGN(vl, av, 2);
 
-	AZ(strcmp(av[0], "sess_out"));
-	AZ(strcmp(av[1], "="));
+	AZ(vstrcmp(av[0], "sess_out"));
+	AZ(vstrcmp(av[1], "="));
 	cfg->c->sess_out = av[2];
 
 	(void)SSL_CTX_set_session_cache_mode(cfg->ctx, SSL_SESS_CACHE_CLIENT
@@ -610,8 +610,8 @@ cmd_tls_cfg_sess_in(CMD_ARGS)
 	ARGN(vl, av, 1);
 	ARGN(vl, av, 2);
 
-	AZ(strcmp(av[0], "sess_in"));
-	AZ(strcmp(av[1], "="));
+	AZ(vstrcmp(av[0], "sess_in"));
+	AZ(vstrcmp(av[1], "="));
 	cfg->c->sess_in = av[2];
 
 }
@@ -659,8 +659,8 @@ cmd_tls_cfg_cert_status(CMD_ARGS)
 	ARGN(vl, av, 1);
 	ARGN(vl, av, 2);
 
-	AZ(strcmp(av[0], "cert_status"));
-	AZ(strcmp(av[1], "="));
+	AZ(vstrcmp(av[0], "cert_status"));
+	AZ(vstrcmp(av[1], "="));
 
 	if (!strcasecmp(av[2], "true"))
 		cfg->c->cert_status = 1;
@@ -704,13 +704,13 @@ cmd_tls_cfg_client_vfy(CMD_ARGS)
 	ARGN(vl, av, 2);
 	ARGZ(vl, av, 3);
 
-	AZ(strcmp(av[0], "client_vfy"));
-	AZ(strcmp(av[1], "="));
-	if (!strcmp(av[2], "none")) {
+	AZ(vstrcmp(av[0], "client_vfy"));
+	AZ(vstrcmp(av[1], "="));
+	if (!vstrcmp(av[2], "none")) {
 		mode = SSL_VERIFY_NONE;
-	} else if (!strcmp(av[2], "required")) {
+	} else if (!vstrcmp(av[2], "required")) {
 		mode = SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
-	} else if (!strcmp(av[2], "optional")) {
+	} else if (!vstrcmp(av[2], "optional")) {
 		mode = SSL_VERIFY_PEER;
 	} else
 		vtc_fatal(vl, "client_vfy: unexpected setting '%s'. "
@@ -757,8 +757,8 @@ cmd_tls_cfg_client_vfy_ca(CMD_ARGS)
 	ARGN(vl, av, 2);
 	ARGZ(vl, av, 3);
 
-	AZ(strcmp(av[0], "client_vfy_ca"));
-	AZ(strcmp(av[1], "="));
+	AZ(vstrcmp(av[0], "client_vfy_ca"));
+	AZ(vstrcmp(av[1], "="));
 
 	cert_names = SSL_load_client_CA_file(av[2]);
 	if (cert_names == NULL) {
@@ -791,7 +791,7 @@ server_ocsp_cb(SSL *ssl, void *priv)
 	 * need to pass a copy. */
 	buf = OPENSSL_malloc(cfg->s->ocsp_len);
 	AN(buf);
-	memcpy(buf, cfg->s->ocsp_resp, cfg->s->ocsp_len);
+	vmemcpy(buf, cfg->s->ocsp_resp, cfg->s->ocsp_len);
 	if (SSL_set_tlsext_status_ocsp_resp(ssl, buf,
 	    cfg->s->ocsp_len) == 0) {
 		OPENSSL_free(buf);
@@ -821,8 +821,8 @@ cmd_tls_cfg_staple(CMD_ARGS)
 	ARGN(vl, av, 1);
 	ARGN(vl, av, 2);
 
-	AZ(strcmp(av[0], "staple"));
-	AZ(strcmp(av[1], "="));
+	AZ(vstrcmp(av[0], "staple"));
+	AZ(vstrcmp(av[1], "="));
 
 	staple = VFIL_readfile(NULL, av[2], &l);
 	if (staple == NULL)
@@ -1050,7 +1050,7 @@ tls_server_setup(const char *spec, struct vtclog *vl)
 	}
 
 	AN(SSL_CTX_set_session_id_context(cfg->ctx,
-		(const unsigned char *) "VTEST", strlen("VTEST")));
+		(const unsigned char *) "VTEST", vstrlen("VTEST")));
 	tls_ctx_keylog(cfg->ctx);
 
 	vtc_log_set_cmd(vl, tls_cfg_cmds_s);
@@ -1231,7 +1231,7 @@ cert_var_resolve(const struct http *hp, SSL *ssl, const char *spec)
 	CHECK_OBJ_NOTNULL(hp, HTTP_MAGIC);
 	CAST_OBJ_NOTNULL(c, hp->tlsconn, TLSCONN_MAGIC);
 
-	AZ(strncmp(spec, "tls.cert", 8));
+	AZ(vstrncmp(spec, "tls.cert", 8));
 	p = spec + 8;
 
 	if (*p != '.') {
@@ -1246,15 +1246,15 @@ cert_var_resolve(const struct http *hp, SSL *ssl, const char *spec)
 		return ("<undef>");
 
 	p++;
-	if (!strcmp(p, "subject")) {
+	if (!vstrcmp(p, "subject")) {
 		r = get_subject_name(c, x);
-	} else if (!strcmp(p, "issuer")) {
+	} else if (!vstrcmp(p, "issuer")) {
 		r = get_issuer_name(c, x);
-	} else if (!strcmp(p, "notafter")) {
+	} else if (!vstrcmp(p, "notafter")) {
 		INCOMPL();
-	} else if (!strcmp(p, "notbefore")) {
+	} else if (!vstrcmp(p, "notbefore")) {
 		INCOMPL();
-	} else if (!strcmp(p, "subject_alt_names")){
+	} else if (!vstrcmp(p, "subject_alt_names")){
 		r = get_subject_alt_names(c, x, hp->vl);
 	} else
 		vtc_fatal(hp->vl, "unknown operand '%s'", spec);
@@ -1436,7 +1436,7 @@ cert_var_alpn(struct tlsconn *c)
 
 	p = strndup((const char *)a, l);
 	AN(p);
-	assert(strlen(p) == l);
+	assert(vstrlen(p) == l);
 
 	free(c->alpn);
 	c->alpn = p;
@@ -1466,29 +1466,29 @@ vtc_tls_var_resolve(const struct http *hp, const char *spec)
 	CAST_OBJ_NOTNULL(cfg, hp->tlsconf, TLSCTX_MAGIC);
 	CAST_OBJ_NOTNULL(c, hp->tlsconn, TLSCONN_MAGIC);
 
-	if (!strcmp(spec, "tls.failed"))
+	if (!vstrcmp(spec, "tls.failed"))
 		return (c->failed ? "true" : "false");
 
 	if (!c->ssl)
 		return ("<undef>");
 
-	if (!strcmp(spec, "tls.version")) {
+	if (!vstrcmp(spec, "tls.version")) {
 		r = SSL_get_version(c->ssl);
-	} else if (!strcmp(spec, "tls.cipher")) {
+	} else if (!vstrcmp(spec, "tls.cipher")) {
 		r = SSL_get_cipher_name(c->ssl);
-	} else if (!strcmp(spec, "tls.servername")) {
+	} else if (!vstrcmp(spec, "tls.servername")) {
 		if (SSL_get_servername_type(c->ssl) != -1)
 			r = SSL_get_servername(c->ssl,
 			    TLSEXT_NAMETYPE_host_name);
-	} else if (!strcmp(spec, "tls.alpn"))
+	} else if (!vstrcmp(spec, "tls.alpn"))
 		return (cert_var_alpn(c));
-	else if (!strncmp(spec, "tls.cert", 8))
+	else if (!vstrncmp(spec, "tls.cert", 8))
 		return (cert_var_resolve(hp, c->ssl, spec));
-	else if (!strcmp(spec, "tls.alert"))
+	else if (!vstrcmp(spec, "tls.alert"))
 		r = cfg->alert;
-	else if (!strcmp(spec, "tls.sess_reused"))
+	else if (!vstrcmp(spec, "tls.sess_reused"))
 		r = (SSL_session_reused(c->ssl) ? "true" : "false");
-	else if (!strcmp(spec, "tls.early_data_status")) {
+	else if (!vstrcmp(spec, "tls.early_data_status")) {
 		int s = SSL_get_early_data_status(c->ssl);
 		if (s == SSL_EARLY_DATA_ACCEPTED)
 			r = "accepted";
@@ -1498,7 +1498,7 @@ vtc_tls_var_resolve(const struct http *hp, const char *spec)
 			r = "not-sent";
 		else
 			WRONG("Unknown return value from SSL_get_early_data_status");
-	} else if (!strcmp(spec, "tls.staple_requested")) {
+	} else if (!vstrcmp(spec, "tls.staple_requested")) {
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 		r = (SSL_get_tlsext_status_type(c->ssl) != -1
 		    ? "true" : "false");
@@ -1507,13 +1507,13 @@ vtc_tls_var_resolve(const struct http *hp, const char *spec)
 		    ? "true" : "false";
 
 #endif
-	} else if (!strcmp(spec, OCSP_CERT_STATUS))
+	} else if (!vstrcmp(spec, OCSP_CERT_STATUS))
 		r = var_ocsp_status(OCSP_CERT_STATUS, hp, cfg, c);
-	else if (!strcmp(spec, OCSP_RESP_STATUS))
+	else if (!vstrcmp(spec, OCSP_RESP_STATUS))
 		r = var_ocsp_status(OCSP_RESP_STATUS, hp, cfg, c);
-	else if (!strcmp(spec, OCSP_VERIFY))
+	else if (!vstrcmp(spec, OCSP_VERIFY))
 		r = var_ocsp_status(OCSP_VERIFY, hp, cfg, c);
-	else if (!strcmp(spec, OCSP_THIS_UPDATE))
+	else if (!vstrcmp(spec, OCSP_THIS_UPDATE))
 		r = var_ocsp_status(OCSP_THIS_UPDATE, hp, cfg, c);
 	else
 		vtc_fatal(hp->vl, "unknown command: '%s'", spec);
@@ -1904,7 +1904,7 @@ cmd_http_tls_shutdown(CMD_ARGS)
 	CAST_OBJ_NOTNULL(conn, hp->tlsconn, TLSCONN_MAGIC);
 	AN(av[0]);
 	if (av[1] != NULL) {
-		if (strcmp(av[1], "-passive"))
+		if (vstrcmp(av[1], "-passive"))
 			vtc_fatal(vl, "Unknown tls_shutdown option: %s", av[1]);
 		AZ(av[2]);
 		passive = 1;
@@ -2041,7 +2041,7 @@ vtc_tls_quic_set_tp(const struct http *hp, const void *tp, size_t len)
 	free(c->quic_tp);
 	c->quic_tp = malloc(len);
 	AN(c->quic_tp);
-	memcpy(c->quic_tp, tp, len);
+	vmemcpy(c->quic_tp, tp, len);
 	c->quic_tp_len = len;
 }
 
@@ -2061,7 +2061,7 @@ vtc_tls_quic_read_tp(const char *fn, unsigned char **tp, long *len)
 		return (-1);
 	while (PEM_read_bio(in, &name, &header, tp, len) == 1) {
 		OPENSSL_free(header);
-		if (!strcmp(name, QUIC_TP_PEM_NAME)) {
+		if (!vstrcmp(name, QUIC_TP_PEM_NAME)) {
 			OPENSSL_free(name);
 			r = 0;
 			break;

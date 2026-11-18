@@ -223,7 +223,7 @@ quic_cfg_param(struct quic_cfg *cfg, const char *arg, struct vtclog *vl)
 	if (isnan(d) || d < 0)
 		vtc_fatal(vl, "-quic_param: bad value in %s", arg);
 
-#define QP_IS(n)	(l == strlen(n) && !strncmp(arg, n, l))
+#define QP_IS(n)	(l == vstrlen(n) && !vstrncmp(arg, n, l))
 	if (QP_IS("initial_max_data"))
 		p->initial_max_data = (uint64_t)d;
 	else if (QP_IS("initial_max_stream_data_bidi_local"))
@@ -264,12 +264,12 @@ quic_cfg_drop(struct quic_cfg *cfg, const char *arg, struct vtclog *vl)
 	    tok = strtok_r(NULL, ",", &save)) {
 		ALLOC_OBJ(d, QUIC_DROP_MAGIC);
 		AN(d);
-		if (!strncmp(tok, "out:", 4))
+		if (!vstrncmp(tok, "out:", 4))
 			d->out = 1;
-		else if (strncmp(tok, "in:", 3))
+		else if (vstrncmp(tok, "in:", 3))
 			vtc_fatal(vl, "-quic_drop: bad spec %s", tok);
 		p = strchr(tok, ':') + 1;
-		if (!strncmp(p, "every:", 6)) {
+		if (!vstrncmp(p, "every:", 6)) {
 			d->every = 1;
 			p += 6;
 		}
@@ -290,23 +290,23 @@ quic_cfg_opt(struct quic_cfg *cfg, char * const **avp, struct vtclog *vl)
 	AN(avp);
 	av = *avp;
 	AN(*av);
-	if (!strcmp(*av, "-0rtt")) {
+	if (!vstrcmp(*av, "-0rtt")) {
 		cfg->zero_rtt = 1;
 		return (1);
 	}
-	if (!strcmp(*av, "-quic_debug")) {
+	if (!vstrcmp(*av, "-quic_debug")) {
 		cfg->debug = 1;
 		return (1);
 	}
-	if (!strcmp(*av, "-quic_param") || !strcmp(*av, "-token_in") ||
-	    !strcmp(*av, "-token_out") || !strcmp(*av, "-quic_drop")) {
+	if (!vstrcmp(*av, "-quic_param") || !vstrcmp(*av, "-token_in") ||
+	    !vstrcmp(*av, "-token_out") || !vstrcmp(*av, "-quic_drop")) {
 		if (av[1] == NULL)
 			vtc_fatal(vl, "%s needs an argument", *av);
-		if (!strcmp(*av, "-quic_param"))
+		if (!vstrcmp(*av, "-quic_param"))
 			quic_cfg_param(cfg, av[1], vl);
-		else if (!strcmp(*av, "-quic_drop"))
+		else if (!vstrcmp(*av, "-quic_drop"))
 			quic_cfg_drop(cfg, av[1], vl);
-		else if (!strcmp(*av, "-token_in"))
+		else if (!vstrcmp(*av, "-token_in"))
 			REPLACE(cfg->token_in, av[1]);
 		else
 			REPLACE(cfg->token_out, av[1]);
@@ -606,7 +606,7 @@ quic_cut(struct quic_conn *qc, unsigned out, uint8_t *buf, size_t *lenp,
 			kept++;
 		if (pkt[u].type == QUIC_PKT_INITIAL)
 			initial = 1;
-		memmove(buf + l, buf + pkt[u].off, pkt[u].len);
+		vmemmove(buf + l, buf + pkt[u].off, pkt[u].len);
 		l += pkt[u].len;
 	}
 	if (cut == 0)
@@ -741,7 +741,7 @@ quic_set_reason(struct quic_conn *qc, const uint8_t *r, size_t l)
 	if (l >= sizeof qc->close_reason)
 		l = sizeof qc->close_reason - 1;
 	if (l > 0)
-		memcpy(qc->close_reason, r, l);
+		vmemcpy(qc->close_reason, r, l);
 	qc->close_reason[l] = '\0';
 }
 
@@ -820,7 +820,7 @@ quic_close_locked(struct quic_conn *qc, int app, uint64_t err,
 	CHECK_OBJ_NOTNULL(qc, QUIC_CONN_MAGIC);
 	if (qc->close_type != QUIC_OPEN)
 		return;
-	l = reason != NULL ? strlen(reason) : 0;
+	l = reason != NULL ? vstrlen(reason) : 0;
 	if (app)
 		ngtcp2_ccerr_set_application_error(&qc->last_error, err,
 		    (const uint8_t *)reason, l);
@@ -1181,7 +1181,7 @@ quic_do_rebind(struct quic_conn *qc)
 	}
 	sl = sizeof ss;
 	AZ(getsockname(fd, (struct sockaddr *)&ss, &sl));
-	memcpy(&qc->local, &ss, sl);
+	vmemcpy(&qc->local, &ss, sl);
 	qc->locallen = sl;
 	closefd(qc->hp->sess->fd);
 	*qc->hp->sess->fd = fd;
@@ -1547,13 +1547,13 @@ quic_cmd_close(struct quic_conn *qc, char * const *av, struct vtclog *vl)
 
 	quic_need_started(qc, av[0], vl);
 	for (av++; *av != NULL; av++) {
-		if (!strcmp(*av, "-app"))
+		if (!vstrcmp(*av, "-app"))
 			app = 1;
-		else if (!strcmp(*av, "-err") && av[1] != NULL) {
+		else if (!vstrcmp(*av, "-err") && av[1] != NULL) {
 			err = h3_err_parse(av[1], vl);
 			err_set = 1;
 			av++;
-		} else if (!strcmp(*av, "-reason") && av[1] != NULL) {
+		} else if (!vstrcmp(*av, "-reason") && av[1] != NULL) {
 			reason = av[1];
 			av++;
 		} else
@@ -1581,7 +1581,7 @@ quic_cmd_rebind(struct quic_conn *qc, char * const *av, struct vtclog *vl)
 	int i = 0;
 
 	quic_need_started(qc, av[0], vl);
-	if (av[1] != NULL && !strcmp(av[1], "-migrate")) {
+	if (av[1] != NULL && !vstrcmp(av[1], "-migrate")) {
 		how = 2;
 		av++;
 	}
@@ -1640,12 +1640,12 @@ quic_pkt_parse(const char *arg, struct vtclog *vl)
 	p = buf;
 	do {
 		tok = strsep(&p, ",");
-		if (!strcmp(tok, "all")) {
+		if (!vstrcmp(tok, "all")) {
 			mask = QUIC_PKT_ALL;
 			continue;
 		}
 		for (u = 0; u < QUIC_PKT_UNKNOWN; u++)
-			if (!strcmp(tok, quic_pkt_keys[u]))
+			if (!vstrcmp(tok, quic_pkt_keys[u]))
 				break;
 		if (u == QUIC_PKT_UNKNOWN)
 			vtc_fatal(vl, "quic_drop: unknown packet type \"%s\"",
@@ -1706,18 +1706,18 @@ quic_cmd_drop(struct quic_conn *qc, char * const *av, struct vtclog *vl)
 	int i = 0;
 
 	for (av++; *av != NULL; av++) {
-		if (!strcmp(*av, "-in") || !strcmp(*av, "-out")) {
+		if (!vstrcmp(*av, "-in") || !vstrcmp(*av, "-out")) {
 			if (dir != NULL)
 				vtc_fatal(vl, "quic_drop: give one of -in and "
 				    "-out");
 			dir = *av + 1;
-			out = !strcmp(*av, "-out");
-		} else if (!strcmp(*av, "-pkt") && av[1] != NULL) {
+			out = !vstrcmp(*av, "-out");
+		} else if (!vstrcmp(*av, "-pkt") && av[1] != NULL) {
 			pkt = av[1];
 			av++;
-		} else if (!strcmp(*av, "-frame")) {
+		} else if (!vstrcmp(*av, "-frame")) {
 			vtc_fatal(vl, "quic_drop: -frame is not implemented");
-		} else if (!strcmp(*av, "-count") && av[1] != NULL) {
+		} else if (!vstrcmp(*av, "-count") && av[1] != NULL) {
 			errno = 0;
 			count = strtoul(av[1], &p, 0);
 			if (errno != 0 || *p != '\0' || count == 0 ||
@@ -1726,7 +1726,7 @@ quic_cmd_drop(struct quic_conn *qc, char * const *av, struct vtclog *vl)
 				    av[1]);
 			counted = 1;
 			av++;
-		} else if (!strcmp(*av, "-wait")) {
+		} else if (!vstrcmp(*av, "-wait")) {
 			wait = 1;
 		} else
 			vtc_fatal(vl, "Unknown quic_drop spec: %s", *av);
@@ -1802,7 +1802,7 @@ quic_cmd_goaway(struct quic_conn *qc, char * const *av, struct vtclog *vl)
 	int i = 0, final = 0;
 
 	quic_need_started(qc, av[0], vl);
-	if (!strcmp(av[0], "rxgoaway")) {
+	if (!vstrcmp(av[0], "rxgoaway")) {
 		if (av[1] != NULL)
 			vtc_fatal(vl, "Unknown rxgoaway spec: %s", av[1]);
 		deadline = VTIM_real() + qc->hp->timeout;
@@ -1819,7 +1819,7 @@ quic_cmd_goaway(struct quic_conn *qc, char * const *av, struct vtclog *vl)
 			vtc_fatal(vl, "No GOAWAY received");
 		return;
 	}
-	if (av[1] != NULL && !strcmp(av[1], "-final")) {
+	if (av[1] != NULL && !vstrcmp(av[1], "-final")) {
 		final = 1;
 		av++;
 	}
@@ -1846,15 +1846,15 @@ quic_conn_cmd(struct http *hp, char * const *av, struct vtclog *vl)
 	CHECK_OBJ_NOTNULL(hp, HTTP_MAGIC);
 	CAST_OBJ_NOTNULL(qc, hp->quic, QUIC_CONN_MAGIC);
 	AN(av[0]);
-	if (!strcmp(av[0], "quic_close"))
+	if (!vstrcmp(av[0], "quic_close"))
 		quic_cmd_close(qc, av, vl);
-	else if (!strcmp(av[0], "quic_rebind"))
+	else if (!vstrcmp(av[0], "quic_rebind"))
 		quic_cmd_rebind(qc, av, vl);
-	else if (!strcmp(av[0], "quic_wait_handshake_confirmed"))
+	else if (!vstrcmp(av[0], "quic_wait_handshake_confirmed"))
 		quic_cmd_confirmed(qc, av, vl);
-	else if (!strcmp(av[0], "quic_drop"))
+	else if (!vstrcmp(av[0], "quic_drop"))
 		quic_cmd_drop(qc, av, vl);
-	else if (!strcmp(av[0], "rxgoaway") || !strcmp(av[0], "txgoaway"))
+	else if (!vstrcmp(av[0], "rxgoaway") || !vstrcmp(av[0], "txgoaway"))
 		quic_cmd_goaway(qc, av, vl);
 	else
 		WRONG(av[0]);
@@ -1982,23 +1982,23 @@ quic_var_peer(const struct quic_conn *qc, const char *n, char *buf,
 		p = ngtcp2_conn_get_remote_transport_params2(qc->conn);
 	if (p == NULL)
 		p = &none;
-	if (!strcmp(n, "initial_max_data"))
+	if (!vstrcmp(n, "initial_max_data"))
 		v = p->initial_max_data;
-	else if (!strcmp(n, "initial_max_stream_data_bidi_local"))
+	else if (!vstrcmp(n, "initial_max_stream_data_bidi_local"))
 		v = p->initial_max_stream_data_bidi_local;
-	else if (!strcmp(n, "initial_max_stream_data_bidi_remote"))
+	else if (!vstrcmp(n, "initial_max_stream_data_bidi_remote"))
 		v = p->initial_max_stream_data_bidi_remote;
-	else if (!strcmp(n, "initial_max_stream_data_uni"))
+	else if (!vstrcmp(n, "initial_max_stream_data_uni"))
 		v = p->initial_max_stream_data_uni;
-	else if (!strcmp(n, "max_streams_bidi"))
+	else if (!vstrcmp(n, "max_streams_bidi"))
 		v = p->initial_max_streams_bidi;
-	else if (!strcmp(n, "max_streams_uni"))
+	else if (!vstrcmp(n, "max_streams_uni"))
 		v = p->initial_max_streams_uni;
-	else if (!strcmp(n, "max_idle_timeout"))
+	else if (!vstrcmp(n, "max_idle_timeout"))
 		v = p->max_idle_timeout / NGTCP2_SECONDS;
-	else if (!strcmp(n, "max_udp_payload_size"))
+	else if (!vstrcmp(n, "max_udp_payload_size"))
 		v = p->max_udp_payload_size;
-	else if (!strcmp(n, "active_connection_id_limit"))
+	else if (!vstrcmp(n, "active_connection_id_limit"))
 		v = p->active_connection_id_limit;
 	else {
 		*unknown = 1;
@@ -2023,10 +2023,10 @@ quic_tls_name_ok(const char *spec)
 	};
 	const char * const *n;
 
-	if (!strncmp(spec, "tls.cert", 8))
+	if (!vstrncmp(spec, "tls.cert", 8))
 		return (1);
 	for (n = names; *n != NULL; n++)
-		if (!strcmp(spec, *n))
+		if (!vstrcmp(spec, *n))
 			return (1);
 	return (0);
 }
@@ -2038,78 +2038,78 @@ quic_var_locked(struct quic_conn *qc, const char *spec, char *buf,
     size_t len, int *unknown)
 {
 
-	if (!strncmp(spec, "tls.", 4))
+	if (!vstrncmp(spec, "tls.", 4))
 		return (qc->hp->tlsconn != NULL ?
 		    vtc_tls_var_resolve(qc->hp, spec) : spec);
-	if (!strcmp(spec, "goaway.id")) {
+	if (!vstrcmp(spec, "goaway.id")) {
 		if (!qc->goaway)
 			return (NULL);
 		(void)snprintf(buf, len, "%jd", (intmax_t)qc->goaway_id);
 		return (buf);
 	}
 	spec += 5;
-	if (!strcmp(spec, "handshake_done"))
+	if (!vstrcmp(spec, "handshake_done"))
 		return (TF(qc->handshake_done));
-	if (!strcmp(spec, "handshake_confirmed"))
+	if (!vstrcmp(spec, "handshake_confirmed"))
 		return (TF(qc->handshake_confirmed));
-	if (!strcmp(spec, "early_data")) {
+	if (!vstrcmp(spec, "early_data")) {
 		if (!qc->early_enabled)
 			return ("not_sent");
 		if (qc->early_rejected)
 			return ("rejected");
 		return (qc->handshake_done ? "accepted" : "pending");
 	}
-	if (!strcmp(spec, "resumed"))
+	if (!vstrcmp(spec, "resumed"))
 		return (TF(qc->resumed));
-	if (!strcmp(spec, "retry"))
+	if (!vstrcmp(spec, "retry"))
 		return (TF(qc->retry));
-	if (!strcmp(spec, "new_token"))
+	if (!vstrcmp(spec, "new_token"))
 		return (TF(qc->new_token));
-	if (!strcmp(spec, "close.type"))
+	if (!vstrcmp(spec, "close.type"))
 		return (quic_close_types[qc->close_type]);
-	if (!strcmp(spec, "close.app"))
+	if (!vstrcmp(spec, "close.app"))
 		return (TF(qc->close_app));
-	if (!strcmp(spec, "close.reason"))
+	if (!vstrcmp(spec, "close.reason"))
 		return (qc->close_reason);
-	if (!strcmp(spec, "pkt_drops_in") || !strcmp(spec, "pkt_drops_out") ||
-	    !strcmp(spec, "drop.in") || !strcmp(spec, "drop.out")) {
-		if (!strcmp(spec, "pkt_drops_in"))
+	if (!vstrcmp(spec, "pkt_drops_in") || !vstrcmp(spec, "pkt_drops_out") ||
+	    !vstrcmp(spec, "drop.in") || !vstrcmp(spec, "drop.out")) {
+		if (!vstrcmp(spec, "pkt_drops_in"))
 			(void)snprintf(buf, len, "%lu", qc->pkt_drops_in);
-		else if (!strcmp(spec, "pkt_drops_out"))
+		else if (!vstrcmp(spec, "pkt_drops_out"))
 			(void)snprintf(buf, len, "%lu", qc->pkt_drops_out);
 		else
 			(void)snprintf(buf, len, "%lu",
-			    qc->filter[!strcmp(spec, "drop.out")].left);
+			    qc->filter[!vstrcmp(spec, "drop.out")].left);
 		return (buf);
 	}
-	if (!strcmp(spec, "initials_out")) {
+	if (!vstrcmp(spec, "initials_out")) {
 		(void)snprintf(buf, len, "%lu", qc->initials_out);
 		return (buf);
 	}
-	if (!strcmp(spec, "first_flight_initials")) {
+	if (!vstrcmp(spec, "first_flight_initials")) {
 		(void)snprintf(buf, len, "%lu", qc->first_flight_initials);
 		return (buf);
 	}
-	if (!strcmp(spec, "close.err") || !strcmp(spec, "version") ||
-	    !strcmp(spec, "pkts_in") || !strcmp(spec, "pkts_out") ||
-	    !strcmp(spec, "drops_in") || !strcmp(spec, "drops_out")) {
-		if (!strcmp(spec, "close.err"))
+	if (!vstrcmp(spec, "close.err") || !vstrcmp(spec, "version") ||
+	    !vstrcmp(spec, "pkts_in") || !vstrcmp(spec, "pkts_out") ||
+	    !vstrcmp(spec, "drops_in") || !vstrcmp(spec, "drops_out")) {
+		if (!vstrcmp(spec, "close.err"))
 			(void)snprintf(buf, len, "%ju",
 			    (uintmax_t)qc->close_err);
-		else if (!strcmp(spec, "version"))
+		else if (!vstrcmp(spec, "version"))
 			(void)snprintf(buf, len, "%u", qc->conn == NULL ? 0 :
 			    ngtcp2_conn_get_negotiated_version2(qc->conn));
-		else if (!strcmp(spec, "pkts_in"))
+		else if (!vstrcmp(spec, "pkts_in"))
 			(void)snprintf(buf, len, "%lu", qc->pkts_in);
-		else if (!strcmp(spec, "pkts_out"))
+		else if (!vstrcmp(spec, "pkts_out"))
 			(void)snprintf(buf, len, "%lu", qc->pkts_out);
-		else if (!strcmp(spec, "drops_in"))
+		else if (!vstrcmp(spec, "drops_in"))
 			(void)snprintf(buf, len, "%lu", qc->drops_in);
 		else
 			(void)snprintf(buf, len, "%lu", qc->drops_out);
 		return (buf);
 	}
-	if (!strncmp(spec, "peer.", 5))
+	if (!vstrncmp(spec, "peer.", 5))
 		return (quic_var_peer(qc, spec + 5, buf, len, unknown));
 	*unknown = 1;
 	return (NULL);
@@ -2128,12 +2128,12 @@ quic_var_resolve(struct http *hp, const char *spec, char *buf, size_t len)
 	CAST_OBJ_NOTNULL(qc, hp->quic, QUIC_CONN_MAGIC);
 	AN(spec);
 	AN(buf);
-	if (!strncmp(spec, "H3_", 3) || !strncmp(spec, "QPACK_", 6)) {
+	if (!vstrncmp(spec, "H3_", 3) || !vstrncmp(spec, "QPACK_", 6)) {
 		(void)snprintf(buf, len, "%ju",
 		    (uintmax_t)h3_err_parse(spec, hp->vl));
 		return (buf);
 	}
-	if (!strncmp(spec, "tls.", 4) && !quic_tls_name_ok(spec))
+	if (!vstrncmp(spec, "tls.", 4) && !quic_tls_name_ok(spec))
 		vtc_fatal(hp->vl, "Unknown TLS variable: %s", spec);
 	PTOK(pthread_mutex_lock(&qc->mtx));
 	r = quic_var_locked(qc, spec, buf, len, &unknown);

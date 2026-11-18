@@ -363,7 +363,7 @@ cmd_var_resolve(struct http *hp, char *spec, char *buf, size_t buflen)
 			return ("true");
 		else
 			return ("false");
-	} else if (!strncmp(spec, "tls.", 4)) {
+	} else if (!vstrncmp(spec, "tls.", 4)) {
 		if (hp->tlsconn)
 			return (vtc_tls_var_resolve(hp, spec));
 		else
@@ -1262,7 +1262,7 @@ cmd_http_txreq(CMD_ARGS)
 			av++;
 		} else if (!vstrcmp(*av, "-nouseragent")) {
 			nouseragent = 1;
-		} else if (!strcmp(*av, "-tls_early_data")) {
+		} else if (!vstrcmp(*av, "-tls_early_data")) {
 			tls_early_data = 1;
 		} else
 			break;
@@ -2286,16 +2286,16 @@ xxx(void)
 			snprintf(strchr(ibuf, 0), 5, "%x",
 			    (unsigned)VRND_RandomTestable() & 0xffff);
 			vz.next_in = TRUST_ME(ibuf);
-			vz.avail_in = strlen(ibuf);
+			vz.avail_in = vstrlen(ibuf);
 			vz.next_out = TRUST_ME(obuf);
 			vz.avail_out = sizeof obuf;
 			assert(Z_OK == deflateInit2(&vz,
 			    9, Z_DEFLATED, 31, 9, Z_DEFAULT_STRATEGY));
 			assert(Z_STREAM_END == deflate(&vz, Z_FINISH));
 			i = vz.stop_bit & 7;
-			if (fl[i] > strlen(ibuf)) {
+			if (fl[i] > vstrlen(ibuf)) {
 				printf("%d %jd <%s>\n", i, vz.stop_bit, ibuf);
-				fl[i] = strlen(ibuf);
+				fl[i] = vstrlen(ibuf);
 			}
 			assert(Z_OK == deflateEnd(&vz));
 		}

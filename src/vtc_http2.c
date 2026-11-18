@@ -1526,19 +1526,19 @@ cmd_tx11obj(CMD_ARGS)
 	 */
 	for (av2 = av + 1; *av2 != NULL; av2++) {
 		name = NULL;
-		if (!strcmp(*av2, "-noadd")) {
+		if (!vstrcmp(*av2, "-noadd")) {
 			path_done = 1;
 			status_done = 1;
 			method_done = 1;
 			scheme_done = 1;
 			authority_done = 1;
-		} else if (!strcmp(*av2, "-status") && CMD_IS("txresp"))
+		} else if (!vstrcmp(*av2, "-status") && CMD_IS("txresp"))
 			status_done = 1;
-		else if (!strcmp(*av2, "-url"))
+		else if (!vstrcmp(*av2, "-url"))
 			path_done = 1;
-		else if (!strcmp(*av2, "-method") || !strcmp(*av2, "-req"))
+		else if (!vstrcmp(*av2, "-method") || !vstrcmp(*av2, "-req"))
 			method_done = 1;
-		else if (!strcmp(*av2, "-scheme"))
+		else if (!vstrcmp(*av2, "-scheme"))
 			scheme_done = 1;
 		else if (!vstrcmp(*av2, "-hdr"))
 			name = av2[1];

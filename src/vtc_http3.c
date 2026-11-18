@@ -54,7 +54,7 @@ h3_err_parse(const char *s, struct vtclog *vl)
 
 	AN(s);
 	for (u = 0; h3_errs[u].name != NULL; u++)
-		if (!strcmp(s, h3_errs[u].name))
+		if (!vstrcmp(s, h3_errs[u].name))
 			return (h3_errs[u].code);
 	v = strtoull(s, &p, 0);
 	if (*s == '\0' || *p != '\0')
@@ -239,7 +239,7 @@ h3_ev_consume(struct h3_stream *s, struct h3_event *ev)
 	case H3_EV_DATA:
 		s->body = realloc(s->body, s->bodylen + ev->len + 1);
 		AN(s->body);
-		memcpy(s->body + s->bodylen, ev->data, ev->len);
+		vmemcpy(s->body + s->bodylen, ev->data, ev->len);
 		s->bodylen += ev->len;
 		s->body[s->bodylen] = '\0';
 		break;
@@ -339,9 +339,9 @@ h3_submit_pending(struct quic_conn *qc)
 		}
 		for (u = 0; u < s->req->n; u++) {
 			nva[u].name = (uint8_t *)s->req->name[u];
-			nva[u].namelen = strlen(s->req->name[u]);
+			nva[u].namelen = vstrlen(s->req->name[u]);
 			nva[u].value = (uint8_t *)s->req->value[u];
-			nva[u].valuelen = strlen(s->req->value[u]);
+			nva[u].valuelen = vstrlen(s->req->value[u]);
 			nva[u].flags = NGHTTP3_NV_FLAG_NONE;
 		}
 		s->txnext = VTAILQ_FIRST(&s->txq);
@@ -486,7 +486,7 @@ h3_recv_data_cb(nghttp3_conn *conn, int64_t sid, const uint8_t *data,
 	ev = h3_ev_push(s, H3_EV_DATA);
 	ev->data = malloc(len + 1L);
 	AN(ev->data);
-	memcpy(ev->data, data, len);
+	vmemcpy(ev->data, data, len);
 	ev->data[len] = '\0';
 	ev->len = len;
 	return (0);
@@ -883,7 +883,7 @@ h3_conn_closed(struct quic_conn *qc)
 
 #define H3_REQ_STREAM(s, av)						\
 	do {								\
-		if (!strcmp((s)->name, "0"))				\
+		if (!vstrcmp((s)->name, "0"))				\
 			vtc_fatal((s)->vl, "\"%s\": stream 0 is the "	\
 			    "connection, use another stream", (av)[0]);	\
 	} while (0)
@@ -1015,16 +1015,16 @@ cmd_h3_txreq(CMD_ARGS)
 
 	/* Pseudo-headers first (RFC 9114 4.3): look ahead for overrides */
 	for (ap = av + 1; *ap != NULL; ap++) {
-		if (!strcmp(*ap, "-noadd"))
+		if (!vstrcmp(*ap, "-noadd"))
 			noadd = 1;
-		else if ((!strcmp(*ap, "-req") || !strcmp(*ap, "-method")) &&
+		else if ((!vstrcmp(*ap, "-req") || !vstrcmp(*ap, "-method")) &&
 		    ap[1] != NULL)
 			method = *++ap;
-		else if (!strcmp(*ap, "-url") && ap[1] != NULL)
+		else if (!vstrcmp(*ap, "-url") && ap[1] != NULL)
 			url = *++ap;
-		else if (!strcmp(*ap, "-scheme") && ap[1] != NULL)
+		else if (!vstrcmp(*ap, "-scheme") && ap[1] != NULL)
 			scheme = *++ap;
-		else if (!strcmp(*ap, "-hdr") && ap[1] != NULL &&
+		else if (!vstrcmp(*ap, "-hdr") && ap[1] != NULL &&
 		    ap[2] != NULL) {
 			if (!strcasecmp(ap[1], ":authority") ||
 			    !strcasecmp(ap[1], "host"))
@@ -1033,58 +1033,58 @@ cmd_h3_txreq(CMD_ARGS)
 		}
 	}
 	if (!noadd) {
-		AZ(h3_hdrs_add(req, ":method", 7, method, strlen(method)));
-		AZ(h3_hdrs_add(req, ":scheme", 7, scheme, strlen(scheme)));
+		AZ(h3_hdrs_add(req, ":method", 7, method, vstrlen(method)));
+		AZ(h3_hdrs_add(req, ":scheme", 7, scheme, vstrlen(scheme)));
 		if (*authority != '\0')
 			AZ(h3_hdrs_add(req, ":authority", 10, authority,
-			    strlen(authority)));
-		AZ(h3_hdrs_add(req, ":path", 5, url, strlen(url)));
+			    vstrlen(authority)));
+		AZ(h3_hdrs_add(req, ":path", 5, url, vstrlen(url)));
 	}
 
 	for (av++; *av != NULL; av++) {
-		if (!strcmp(*av, "-noadd"))
+		if (!vstrcmp(*av, "-noadd"))
 			continue;
-		if (!strcmp(*av, "-req") || !strcmp(*av, "-method") ||
-		    !strcmp(*av, "-url") || !strcmp(*av, "-scheme")) {
+		if (!vstrcmp(*av, "-req") || !vstrcmp(*av, "-method") ||
+		    !vstrcmp(*av, "-url") || !vstrcmp(*av, "-scheme")) {
 			if (av[1] == NULL)
 				vtc_fatal(vl, "%s needs an argument", *av);
 			/* With -noadd, in the order given */
-			if (!strcmp(*av, "-url"))
+			if (!vstrcmp(*av, "-url"))
 				pseudo = ":path";
-			else if (!strcmp(*av, "-scheme"))
+			else if (!vstrcmp(*av, "-scheme"))
 				pseudo = ":scheme";
 			else
 				pseudo = ":method";
-			if (noadd && h3_hdrs_add(req, pseudo, strlen(pseudo),
-			    av[1], strlen(av[1])))
+			if (noadd && h3_hdrs_add(req, pseudo, vstrlen(pseudo),
+			    av[1], vstrlen(av[1])))
 				vtc_fatal(vl, "Too many header fields");
 			av++;
-		} else if (!strcmp(*av, "-hdr")) {
+		} else if (!vstrcmp(*av, "-hdr")) {
 			if (av[1] == NULL || av[2] == NULL)
 				vtc_fatal(vl, "-hdr takes two arguments");
-			if (h3_hdrs_add(req, av[1], strlen(av[1]), av[2],
-			    strlen(av[2])))
+			if (h3_hdrs_add(req, av[1], vstrlen(av[1]), av[2],
+			    vstrlen(av[2])))
 				vtc_fatal(vl, "Too many header fields");
 			av += 2;
-		} else if (!strcmp(*av, "-body") && av[1] != NULL) {
+		} else if (!vstrcmp(*av, "-body") && av[1] != NULL) {
 			AZ(body);
 			body = strdup(av[1]);
 			AN(body);
-			bodylen = strlen(body);
+			bodylen = vstrlen(body);
 			av++;
-		} else if (!strcmp(*av, "-bodyfrom") && av[1] != NULL) {
+		} else if (!vstrcmp(*av, "-bodyfrom") && av[1] != NULL) {
 			AZ(body);
 			body = VFIL_readfile(NULL, av[1], &len);
 			if (body == NULL)
 				vtc_fatal(vl, "Cannot read %s", av[1]);
 			bodylen = len;
 			av++;
-		} else if (!strcmp(*av, "-bodylen") && av[1] != NULL) {
+		} else if (!vstrcmp(*av, "-bodylen") && av[1] != NULL) {
 			AZ(body);
 			body = synth_body(av[1], 0);
-			bodylen = strlen(body);
+			bodylen = vstrlen(body);
 			av++;
-		} else if (!strncmp(*av, "-gzip", 5)) {
+		} else if (!vstrncmp(*av, "-gzip", 5)) {
 			i = vtc_gzip_cmd(qc->hp, av, &body, &bodylen);
 			if (i == 0)
 				break;
@@ -1092,9 +1092,9 @@ cmd_h3_txreq(CMD_ARGS)
 			if (i > 1 && h3_hdrs_add(req, "content-encoding", 16,
 			    "gzip", 4))
 				vtc_fatal(vl, "Too many header fields");
-		} else if (!strcmp(*av, "-nostrend"))
+		} else if (!vstrcmp(*av, "-nostrend"))
 			nostrend = 1;
-		else if (!strcmp(*av, "-early"))
+		else if (!vstrcmp(*av, "-early"))
 			early = 1;
 		else
 			break;
@@ -1148,16 +1148,16 @@ cmd_h3_txdata(CMD_ARGS)
 	qc = s->qc;
 	H3_REQ_STREAM(s, av);
 	for (av++; *av != NULL; av++) {
-		if (!strcmp(*av, "-data") && av[1] != NULL) {
+		if (!vstrcmp(*av, "-data") && av[1] != NULL) {
 			AZ(data);
 			data = strdup(av[1]);
 			AN(data);
 			av++;
-		} else if (!strcmp(*av, "-datalen") && av[1] != NULL) {
+		} else if (!vstrcmp(*av, "-datalen") && av[1] != NULL) {
 			AZ(data);
 			data = synth_body(av[1], 0);
 			av++;
-		} else if (!strcmp(*av, "-nostrend"))
+		} else if (!vstrcmp(*av, "-nostrend"))
 			nostrend = 1;
 		else
 			break;
@@ -1172,13 +1172,13 @@ cmd_h3_txdata(CMD_ARGS)
 		i = -1;
 	else {
 		if (data != NULL && *data != '\0') {
-			vtc_log(vl, 3, "tx: DATA (%zu bytes)%s", strlen(data),
+			vtc_log(vl, 3, "tx: DATA (%zu bytes)%s", vstrlen(data),
 			    nostrend ? "" : " + FIN");
 			if (s->txnext == NULL)
 				s->txnext = h3_chunk_add(s, data,
-				    strlen(data));
+				    vstrlen(data));
 			else
-				(void)h3_chunk_add(s, data, strlen(data));
+				(void)h3_chunk_add(s, data, vstrlen(data));
 			data = NULL;
 		}
 		s->txeof = !nostrend;
@@ -1204,7 +1204,7 @@ h3_shutdown_stream(struct h3_stream *s, char * const *av, struct vtclog *vl,
 
 	qc = s->qc;
 	H3_REQ_STREAM(s, av);
-	if (av[1] != NULL && !strcmp(av[1], "-err") && av[2] != NULL) {
+	if (av[1] != NULL && !vstrcmp(av[1], "-err") && av[2] != NULL) {
 		err = h3_err_parse(av[2], vl);
 		av += 2;
 	}
@@ -1273,9 +1273,9 @@ cmd_h3_rxdata(CMD_ARGS)
 	CAST_OBJ_NOTNULL(s, priv, H3_STREAM_MAGIC);
 	H3_REQ_STREAM(s, av);
 	for (av++; *av != NULL; av++) {
-		if (!strcmp(*av, "-all"))
+		if (!vstrcmp(*av, "-all"))
 			all = 1;
-		else if (!strcmp(*av, "-some") && av[1] != NULL) {
+		else if (!vstrcmp(*av, "-some") && av[1] != NULL) {
 			times = strtoul(av[1], &p, 0);
 			if (*p != '\0' || times == 0)
 				vtc_fatal(vl, "-some takes a positive number");
@@ -1318,7 +1318,7 @@ cmd_h3_rxresp(CMD_ARGS)
 	CAST_OBJ_NOTNULL(s, priv, H3_STREAM_MAGIC);
 	H3_REQ_STREAM(s, av);
 	/* -no_obj, for tests shared with HTTP/1: the FIN ends the response */
-	if (av[1] != NULL && !strcmp(av[1], "-no_obj"))
+	if (av[1] != NULL && !vstrcmp(av[1], "-no_obj"))
 		av++;
 	if (av[1] != NULL)
 		vtc_fatal(vl, "Unknown rxresp spec: %s", av[1]);
@@ -1421,7 +1421,7 @@ cmd_h3_gunzip(CMD_ARGS)
 	s->bodylen = VSB_len(vout);
 	s->body = malloc(s->bodylen + 1L);
 	AN(s->body);
-	memcpy(s->body, VSB_data(vout), s->bodylen + 1L);
+	vmemcpy(s->body, VSB_data(vout), s->bodylen + 1L);
 	VSB_destroy(&vout);
 	vtc_log(vl, 3, "new bodylen %ld", s->bodylen);
 	vtc_dump(vl, 4, "body", s->body, s->bodylen);
@@ -1450,62 +1450,62 @@ h3_var_resolve(struct h3_stream *s, const char *spec, char *buf, size_t len)
 	int i;
 
 	qc = s->qc;
-	if (!strncmp(spec, "quic.", 5) || !strncmp(spec, "tls.", 4) ||
-	    !strncmp(spec, "goaway.", 7))
+	if (!vstrncmp(spec, "quic.", 5) || !vstrncmp(spec, "tls.", 4) ||
+	    !vstrncmp(spec, "goaway.", 7))
 		return (quic_var_resolve(qc->hp, spec, buf, len));
-	if (!strcmp(spec, "stream.id")) {
+	if (!vstrcmp(spec, "stream.id")) {
 		PTOK(pthread_mutex_lock(&qc->mtx));
 		i = s->submitted;
 		(void)snprintf(buf, len, "%jd", (intmax_t)s->id);
 		PTOK(pthread_mutex_unlock(&qc->mtx));
 		return (i ? buf : NULL);
 	}
-	if (!strcmp(spec, "rst.err")) {
+	if (!vstrcmp(spec, "rst.err")) {
 		if (!s->rst_seen)
 			return (NULL);
 		(void)snprintf(buf, len, "%ju", (uintmax_t)s->rst_err);
 		return (buf);
 	}
-	if (!strcmp(spec, "stop.err")) {
+	if (!vstrcmp(spec, "stop.err")) {
 		PTOK(pthread_mutex_lock(&qc->mtx));
 		i = s->stop_seen;
 		(void)snprintf(buf, len, "%ju", (uintmax_t)s->stop_err);
 		PTOK(pthread_mutex_unlock(&qc->mtx));
 		return (i ? buf : NULL);
 	}
-	if (!strncmp(spec, "resp.", 5)) {
+	if (!vstrncmp(spec, "resp.", 5)) {
 		spec += 5;
-		if (!strcmp(spec, "body"))
+		if (!vstrcmp(spec, "body"))
 			return (s->body);
-		if (!strcmp(spec, "bodylen")) {
+		if (!vstrcmp(spec, "bodylen")) {
 			(void)snprintf(buf, len, "%ld", s->bodylen);
 			return (buf);
 		}
-		if (!strcmp(spec, "status"))
+		if (!vstrcmp(spec, "status"))
 			return (h3_hdrs_find(s->resp, ":status"));
-		if (!strncmp(spec, "http.", 5))
+		if (!vstrncmp(spec, "http.", 5))
 			return (h3_hdrs_find(s->resp, spec + 5));
-		if (!strncmp(spec, "trailer.", 8))
+		if (!vstrncmp(spec, "trailer.", 8))
 			return (h3_hdrs_find(s->trailers, spec + 8));
 		return (NULL);
 	}
-	if (!strncmp(spec, "req.", 4)) {
+	if (!vstrncmp(spec, "req.", 4)) {
 		h = s->req;
 		spec += 4;
-		if (!strcmp(spec, "method"))
+		if (!vstrcmp(spec, "method"))
 			return (h3_hdrs_find(h, ":method"));
-		if (!strcmp(spec, "url"))
+		if (!vstrcmp(spec, "url"))
 			return (h3_hdrs_find(h, ":path"));
-		if (!strcmp(spec, "scheme"))
+		if (!vstrcmp(spec, "scheme"))
 			return (h3_hdrs_find(h, ":scheme"));
-		if (!strcmp(spec, "authority"))
+		if (!vstrcmp(spec, "authority"))
 			return (h3_hdrs_find(h, ":authority"));
-		if (!strncmp(spec, "http.", 5))
+		if (!vstrncmp(spec, "http.", 5))
 			return (h3_hdrs_find(h, spec + 5));
 		return (NULL);
 	}
 	for (u = 0; h3_errs[u].name != NULL; u++) {
-		if (!strcmp(spec, h3_errs[u].name)) {
+		if (!vstrcmp(spec, h3_errs[u].name)) {
 			(void)snprintf(buf, len, "%ju",
 			    (uintmax_t)h3_errs[u].code);
 			return (buf);
@@ -1537,10 +1537,10 @@ cmd_h3_conn(CMD_ARGS)
 	struct h3_stream *s;
 
 	CAST_OBJ_NOTNULL(s, priv, H3_STREAM_MAGIC);
-	if (strcmp(s->name, "0"))
+	if (vstrcmp(s->name, "0"))
 		vtc_fatal(vl, "\"%s\" is a connection command, use stream 0",
 		    av[0]);
-	if (!strcmp(av[0], "expect_close")) {
+	if (!vstrcmp(av[0], "expect_close")) {
 		AZ(av[1]);
 		quic_expect_close(s->qc->hp, vl);
 	} else
@@ -1623,7 +1623,7 @@ h3_stream_new(const char *name, struct quic_conn *qc)
 	struct h3_stream *s;
 	char buf[32];
 
-	if (!strcmp(name, "next")) {
+	if (!vstrcmp(name, "next")) {
 		bprintf(buf, "next%u", qc->nstreams + 1);
 		name = buf;
 	}
@@ -1707,13 +1707,13 @@ h3_cmd_stream(CMD_ARGS)
 
 	CAST_OBJ_NOTNULL(hp, priv, HTTP_MAGIC);
 	CAST_OBJ_NOTNULL(qc, hp->quic, QUIC_CONN_MAGIC);
-	AZ(strcmp(av[0], "stream"));
+	AZ(vstrcmp(av[0], "stream"));
 	av++;
 	AN(*av);
 
 	/* The client thread owns the stream list */
 	VTAILQ_FOREACH(s, &qc->streams, list)
-		if (!strcmp(s->name, av[0]))
+		if (!vstrcmp(s->name, av[0]))
 			break;
 	if (s == NULL)
 		s = h3_stream_new(av[0], qc);
@@ -1722,7 +1722,7 @@ h3_cmd_stream(CMD_ARGS)
 	for (; *av != NULL; av++) {
 		if (vtc_error)
 			break;
-		if (!strcmp(*av, "-wait")) {
+		if (!vstrcmp(*av, "-wait")) {
 			if (!s->running)
 				vtc_fatal(vl, "stream %s is not running",
 				    s->name);
@@ -1731,13 +1731,13 @@ h3_cmd_stream(CMD_ARGS)
 		}
 		if (s->running)
 			h3_stream_wait(s);
-		if (!strcmp(*av, "-start") || !strcmp(*av, "-run")) {
+		if (!vstrcmp(*av, "-start") || !vstrcmp(*av, "-run")) {
 			if (s->spec == NULL)
 				vtc_fatal(vl, "stream %s has no spec",
 				    s->name);
 			quic_start(hp);
 			h3_stream_start(s);
-			if (!strcmp(*av, "-run"))
+			if (!vstrcmp(*av, "-run"))
 				h3_stream_wait(s);
 			continue;
 		}
