@@ -1342,8 +1342,10 @@ cmd_sendhex(CMD_ARGS)
  * set by each of them.
  *
  * \-noadd
- *	Do not add default headers. Useful to avoid duplicates when sending
- *	default headers using ``-hdr``, ``-idxHdr`` and ``-litIdxHdr``.
+ *	Do not add default headers. A pseudo-header sent with ``-hdr`` or
+ *	``-litHdr``, or with ``-idxHdr`` or ``-litIdxHdr`` and a static table
+ *	index, replaces its default already. One sent with a dynamic table
+ *	index still needs ``-noadd`` to avoid a duplicate.
  *
  * \-status INT (txresp)
  *	Set the :status pseudo-header.
@@ -1436,6 +1438,26 @@ cmd_sendhex(CMD_ARGS)
 #define cmd_txpush	cmd_tx11obj
 #define cmd_txcont	cmd_tx11obj
 
+/* The name of an HPACK static table entry (RFC 7541, Appendix A), or NULL. */
+static const char *
+hpk_static_name(const char *idx)
+{
+	static const char * const names[] = {
+#define STAT_HDRS(i, k, v) [i] = k,
+#include "vtc_h2_stattbl.h"
+#undef STAT_HDRS
+	};
+	unsigned long u;
+	char *e;
+
+	if (idx == NULL)
+		return (NULL);
+	u = strtoul(idx, &e, 0);
+	if (*idx == '\0' || *e != '\0' || u >= vcountof(names))
+		return (NULL);
+	return (names[u]);
+}
+
 static void
 cmd_tx11obj(CMD_ARGS)
 {
@@ -1447,6 +1469,7 @@ cmd_tx11obj(CMD_ARGS)
 	int scheme_done = 1;
 	int authority_done = 1;
 	char * const *av2;
+	const char *name;
 	struct vsb *authority = NULL;
 	long bodylen = 0;
 	ssize_t len;
@@ -1499,9 +1522,10 @@ cmd_tx11obj(CMD_ARGS)
 	/*
 	 * Pseudo-header fields must precede all regular ones (RFC 9113 8.3),
 	 * so the defaults are encoded first. Look ahead for the pseudo-headers
-	 * the arguments provide themselves.
+	 * the arguments provide themselves, by name or by static table index.
 	 */
 	for (av2 = av + 1; *av2 != NULL; av2++) {
+		name = NULL;
 		if (!strcmp(*av2, "-noadd")) {
 			path_done = 1;
 			status_done = 1;
@@ -1516,10 +1540,29 @@ cmd_tx11obj(CMD_ARGS)
 			method_done = 1;
 		else if (!strcmp(*av2, "-scheme"))
 			scheme_done = 1;
-		else if (!strcmp(*av2, "-hdr") && av2[1] != NULL &&
-		    (!strcasecmp(av2[1], ":authority") ||
-		    !strcasecmp(av2[1], "host")))
+		else if (!vstrcmp(*av2, "-hdr"))
+			name = av2[1];
+		else if (!vstrcmp(*av2, "-idxHdr"))
+			name = hpk_static_name(av2[1]);
+		else if (!vstrcmp(*av2, "-litIdxHdr") && av2[1] != NULL)
+			name = hpk_static_name(av2[2]);
+		else if (!vstrcmp(*av2, "-litHdr") && av2[1] != NULL &&
+		    av2[2] != NULL)
+			name = av2[3];
+
+		if (name == NULL)
+			continue;
+		if (!strcasecmp(name, ":authority") ||
+		    !strcasecmp(name, "host"))
 			authority_done = 1;
+		else if (!vstrcmp(name, ":path"))
+			path_done = 1;
+		else if (!vstrcmp(name, ":method"))
+			method_done = 1;
+		else if (!vstrcmp(name, ":scheme"))
+			scheme_done = 1;
+		else if (!vstrcmp(name, ":status"))
+			status_done = 1;
 	}
 
 	memset(&hdr, 0, sizeof(hdr));
@@ -1533,9 +1576,8 @@ cmd_tx11obj(CMD_ARGS)
 	/*
 	 * Off by default, as the request then grows a Host header. Servers
 	 * such as nghttp2 reject a request with neither :authority nor Host.
-	 * Only -hdr is looked at: an authority sent through -idxHdr, -litHdr
-	 * or -litIdxHdr, possibly by dynamic table index, still gets the
-	 * default added, so such a test needs -noadd or no macro.
+	 * An authority sent by dynamic table index still gets the default
+	 * added, so such a test needs -noadd or no macro.
 	 */
 	if (!authority_done && macro_isdef(NULL, "http_default_authority")) {
 		authority = macro_expand(vl, "${http_default_authority}");
