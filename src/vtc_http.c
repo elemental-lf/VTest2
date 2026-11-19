@@ -1391,7 +1391,8 @@ cmd_http_send_n(CMD_ARGS)
  *         Push STRING on the connection split in two writes as per the OFFSET
  *         with a delay of usec microseconds (default: 200 * 1000 = 200ms)
  *         after both writes. This allows to "sweep test" handling of data
- *         received with different boundaries between I/Os
+ *         received with different boundaries between I/Os. On a TLS
+ *         connection, each write is a TLS record.
  */
 
 static void
@@ -1423,14 +1424,16 @@ cmd_http_send_split(CMD_ARGS)
 	if (s > l)
 		vtc_fatal(hp->vl, "send_split offset %d >= %d", s, l);
 
+	/* Through the session, as http_write(): over TLS a write must be a
+	 * TLS record. TLS cannot write nothing, so an empty part is skipped. */
 	ll = s;
 	vtc_dump(hp->vl, 4, "send_split", av[2], s);
-	i = write(*hp->sess->fd, av[2], s);
+	i = s > 0 ? (int)hp->so->write(hp, av[2], s) : 0;
 	usleep(us);
 	if (i == ll) {
 		ll = l - s;
 		vtc_dump(hp->vl, 4, "send_split", av[2] + s, ll);
-		i = write(*hp->sess->fd, av[2] + s, ll);
+		i = (int)hp->so->write(hp, av[2] + s, ll);
 		usleep(us);
 	}
 	if (i != ll) {
